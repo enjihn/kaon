@@ -12,18 +12,18 @@ their existing attribution and should carry a notice that they were changed.
 
 ## Steam Metadata Editor AppInfo codec
 
-Kaon's automatic launch-option repair uses the AppInfo binary VDF codec derived
-from Steam Metadata Editor by Tomas Ralph. That project is licensed under the
-GNU General Public License, version 3 or (at the recipient's option) any later
-version.
+Kaon's bundled Python setup and repair engine uses the AppInfo binary VDF codec
+derived from Steam Metadata Editor by Tomas Ralph. That project is licensed
+under the GNU General Public License, version 3 or (at the recipient's option)
+any later version.
 
-The installer includes the exact corresponding source at
+The Python engine and codec form the GPL component shipped in the app. The
+installer includes the exact corresponding source at
 `Contents/Resources/Source/steammetadataeditor/src/appinfo.py` and
 `Contents/Resources/Source/macos/engine/`, with the license at
-`Contents/Resources/Licenses/GPL-3.0-or-later.txt`. Kaon's repair modules that
-form a combined GPL component with this codec retain GPL notices in their
-source. The native setup UI and separable Apache-licensed utilities remain an
-aggregate alongside that component.
+`Contents/Resources/Licenses/GPL-3.0-or-later.txt`. The native setup UI and
+separable Apache-licensed utilities remain an aggregate alongside that
+component.
 
 Source for the complete release is available from the Git tag associated with
 the release artifact.

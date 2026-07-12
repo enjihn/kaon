@@ -1,8 +1,8 @@
-# Kaon for macOS — automated Steam + CrossOver setup
+# Kaon Setup — automated Steam + CrossOver integration
 
 [![macOS CI](https://github.com/enjihn/kaon/actions/workflows/ci.yml/badge.svg)](https://github.com/enjihn/kaon/actions/workflows/ci.yml)
 
-Kaon lets the native macOS Steam client install, update, and launch Windows
+Kaon Setup lets the native macOS Steam client install, update, and launch Windows
 Steam games through an existing CrossOver installation. This fork turns the
 original proof of concept into a guided macOS app with repair, background
 startup, rollback, and uninstall support.
@@ -71,10 +71,12 @@ Then:
    installed into that shared library is discovered by Automatic repair or the
    manual Repair button; you do not need to edit each game by hand.
 
-Kaon is currently beta software. CI and manually triggered development
-artifacts may be ad-hoc signed and require Control-click → **Open**, but the
-release workflow refuses to publish a tagged public release unless the Apple
-Silicon build is Developer-ID signed and Apple-notarized.
+Kaon Setup is volunteer-maintained beta software. Compatibility and support
+timelines are not guaranteed; detailed bug reports and contributions are
+welcome. CI and manually triggered development artifacts may be ad-hoc signed
+and require Control-click → **Open**, but the release workflow refuses to
+publish a tagged public release unless the Apple Silicon build is Developer-ID
+signed and Apple-notarized.
 
 ## What Kaon changes
 
@@ -374,10 +376,11 @@ artifact policy, and release secrets.
 
 ## Licensing and redistribution
 
-The original Kaon work and this repository's general setup code retain the
-top-level [Apache License 2.0](LICENSE). The AppInfo codec inherited from
-Steam Metadata Editor, and Kaon's tightly coupled repair module, are distributed
-under GPLv3-or-later; see
+The original Kaon work, the native Swift installer, and the repository's
+separable utilities use the top-level [Apache License 2.0](LICENSE). The bundled
+Python setup and repair engine integrates the AppInfo codec inherited from Steam
+Metadata Editor; that combined component is distributed under GPLv3-or-later;
+see
 [third-party notices](docs/THIRD_PARTY_NOTICES.md) and
 [`steammetadataeditor/LICENSE`](steammetadataeditor/LICENSE).
 
