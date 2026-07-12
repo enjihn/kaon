@@ -219,7 +219,7 @@ echo "Freezing kaon-setup for $TARGET_ARCH with PyInstaller $PYINSTALLER_VERSION
 "$PYTHON" -m PyInstaller "${PYINSTALLER_ARGS[@]}" "$ENGINE_ENTRYPOINT"
 [[ -x "$FROZEN_DIST/kaon-setup" ]] || die "PyInstaller did not create kaon-setup"
 install -m 0755 "$FROZEN_DIST/kaon-setup" "$ENTRYPOINT_DIR/kaon-setup"
-/usr/bin/lipo -verify_arch "$TARGET_ARCH" "$ENTRYPOINT_DIR/kaon-setup"
+/usr/bin/lipo "$ENTRYPOINT_DIR/kaon-setup" -verify_arch "$TARGET_ARCH"
 [[ "$(/usr/bin/lipo -archs "$ENTRYPOINT_DIR/kaon-setup")" == "$TARGET_ARCH" ]] \
     || die "frozen kaon-setup is not a thin $TARGET_ARCH executable"
 FROZEN_ARCHIVE_LIST="$BUILD_ROOT/pyinstaller-archive.txt"
@@ -266,7 +266,7 @@ fi
 binary="$bin_path/KaonInstaller"
 [[ -x "$binary" ]] || die "Swift product was not created: $binary"
 install -m 0755 "$binary" "$MACOS_DIR/KaonInstaller"
-/usr/bin/lipo -verify_arch "$TARGET_ARCH" "$MACOS_DIR/KaonInstaller"
+/usr/bin/lipo "$MACOS_DIR/KaonInstaller" -verify_arch "$TARGET_ARCH"
 [[ "$(/usr/bin/lipo -archs "$MACOS_DIR/KaonInstaller")" == "$TARGET_ARCH" ]] \
     || die "KaonInstaller is not a thin $TARGET_ARCH executable"
 
