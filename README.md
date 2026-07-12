@@ -25,11 +25,39 @@ You need:
 - CrossOver or CrossOver Preview already installed; and
 - Windows Steam installed inside a CrossOver bottle, normally named `Steam`.
 
+### Before you run Kaon
+
+If those prerequisites are unfamiliar, use this exact order:
+
+1. Install [native Steam for Mac](https://store.steampowered.com/about/), sign
+   in, wait until the Library appears, then choose **Steam → Quit Steam**.
+2. Install [CrossOver](https://www.codeweavers.com/crossover) or CrossOver
+   Preview and open it.
+3. In CrossOver, choose **Install a Windows Application**, select **Steam**,
+   and install it in a bottle named `Steam`. Let Windows Steam update and sign
+   in once.
+4. Quit native Steam before running Kaon Setup. Windows Steam may remain open,
+   although the optional tray-hiding feature waits until that bottle is idle.
+
+If you do not already have access to CrossOver Preview, use ordinary CrossOver;
+Kaon does not require Preview.
+
+Kaon Setup automatically finds ordinary `Steam` bottles and shows a checklist.
+If a requirement is missing, its Install button stays disabled and the app
+offers **Open Selected CrossOver**, **Open or Get Native Steam**, and
+**Refresh Checks** buttons.
+
 Then:
 
-1. Download the correct Mac build from
-   [Releases](https://github.com/enjihn/kaon/releases).
-2. Open **Kaon Setup.app**.
+1. Open [Releases](https://github.com/enjihn/kaon/releases), expand **Assets**,
+   and download the signed `.dmg`: `Kaon-Setup-<version>-arm64.dmg` for Apple
+   Silicon (M1/M2/M3/M4/M5), or `Kaon-Setup-<version>-x86_64.dmg` for Intel.
+   Do not use a source-code ZIP or an Actions artifact. Stop if the release
+   notes do not say both builds are **Developer ID signed and Apple-notarized**.
+   Apple menu → **About This Mac** tells you which processor you have.
+2. Open the DMG, drag **Kaon Setup.app** to **Applications**, then open it.
+   Public tagged releases are Developer-ID signed and Apple-notarized; the
+   release notes state the verified status for both Mac architectures.
 3. Choose **CrossOver**, **CrossOver Preview**, or a custom CrossOver app.
 4. Select the bottle containing Windows Steam.
 5. Review the optional background and interface-hiding choices, then click
@@ -37,13 +65,18 @@ Then:
 6. Reopen native Steam. Windows games can now be installed from its normal
    Library interface. **In Steam's install dialog, choose the library labeled
    `Shared CrossOver … Library`**, not the native default library.
-7. Choose the Kaon launch option when starting a game. Every future Windows
-   game installed into that shared library is discovered automatically; you do
-   not need to ask Codex or edit each game by hand.
+7. After a newly downloaded game finishes, choose **Steam → Quit Steam**. If
+   Automatic repair is on, wait up to one minute and reopen Steam. If it is
+   off, open **Kaon Setup → Maintenance**, click **Repair Kaon**, then reopen
+   Steam.
+8. Click Play and choose **Play through … (Kaon)**. Every future Windows game
+   installed into that shared library is discovered by Automatic repair or the
+   manual Repair button; you do not need to edit each game by hand.
 
-Kaon is currently beta software. Until a release is Developer-ID signed and
-notarized, macOS may require you to Control-click the app, choose **Open**, and
-confirm once. The release page states whether a build is notarized.
+Kaon is currently beta software. CI and manually triggered development
+artifacts may be ad-hoc signed and require Control-click → **Open**, but the
+release workflow refuses to publish a tagged public release unless both
+architecture builds are Developer-ID signed and Apple-notarized.
 
 ## What Kaon changes
 
@@ -108,9 +141,20 @@ client updater is genuinely stuck.
 | **CrossOver Preview** | Uses `CrossOver Preview.app`; the exact selected path is saved, so stable and Preview can coexist. |
 | **Custom** | Uses a renamed or nonstandard CrossOver app you select. |
 | **Automatic repair** | Watches Steam metadata at low frequency and restores only Kaon-owned entries after native Steam is closed. Enabled by default. |
-| **Start Windows Steam at login** | Launches the selected bottle's Steam directly and silently once after login. It does not continuously relaunch Steam if you deliberately quit it. |
+| **Start Windows Steam at login** | Launches the selected bottle's Steam directly and silently immediately after setup and once after future logins. It does not continuously relaunch Steam if you deliberately quit it. |
 | **Hide CrossOver from the background Dock** | Uses the direct background launcher and optionally removes the selected CrossOver app's pinned Dock tile. A tile removed by Kaon is recorded and can be restored. CrossOver appears normally when you open it yourself. |
 | **Hide Windows tray icons** | Experimental. Hides every Windows tray icon in the selected bottle, not only Steam. Off by default. |
+
+Recommended for most people: choose the CrossOver edition that contains the
+Steam bottle, leave **Automatic repair** and **Start Windows Steam at login**
+on, and leave both hiding options off until a game launches successfully.
+Startup keeps the Windows Steam window closed; Dock and menu-bar visibility are
+controlled separately by the two hiding options.
+
+macOS may show a **Background Items Added** notification after setup. That is
+expected for the repair and startup agents selected above. Kaon's Uninstall
+removes those agents; disabling them in System Settings disables the matching
+feature.
 
 ## Optional Dock and menu-bar hiding
 
@@ -151,7 +195,8 @@ Steam or Steam Metadata Editor is using it.
 
 Uninstall removes Kaon's agents and exact owned launch entries, restores a
 Kaon-patched bottle Explorer, and restores a Dock tile that Kaon removed. It
-preserves game files, the shared-library data, content-addressed backups, and
+also removes Kaon's Windows-platform override. It preserves downloaded games,
+the shared-library registration and data, content-addressed backups, and
 recovery support by default so uninstall cannot erase a game library.
 
 ## Command line
@@ -248,6 +293,21 @@ managed because Windows Steam cannot see those files. If the game is already
 in the shared library, quit native Steam and run Repair; Kaon discovers it from
 its `appmanifest_*.acf` file automatically.
 
+### The Shared CrossOver library is missing
+
+Do not create a replacement library or reinstall any games. Quit native Steam,
+open **Kaon Setup → Maintenance**, click **Repair Kaon**, and reopen Steam. If
+the library is still absent, use **Check Status** and include its result when
+reporting the problem.
+
+### Kaon Setup says installation failed
+
+Install and Repair are transactional. Kaon restores only unchanged bytes it
+just wrote and never deletes the CrossOver bottle or games. Quit Steam, reopen
+Maintenance, and retry or copy the displayed error. If the message names a
+recovery snapshot, keep that folder: it means another process changed a file
+during rollback, so Kaon deliberately left the newer file untouched.
+
 ### CrossOver Preview was selected but stable CrossOver starts
 
 Open Setup and confirm the displayed application path. Stable and Preview can
@@ -282,8 +342,8 @@ but do not upload your whole Steam or CrossOver bottle.
   requirements are incompatible with Wine/CrossOver regardless of Kaon.
 - Background-item notifications and controls are owned by macOS and cannot be
   suppressed by Kaon.
-- A public ad-hoc-signed build triggers more Gatekeeper friction than a
-  notarized Developer ID build. Release notes identify the signing status.
+- Manually triggered development artifacts are ad-hoc signed and may trigger
+  Gatekeeper friction. Tagged public releases are blocked unless notarized.
 
 ## Building and contributing
 

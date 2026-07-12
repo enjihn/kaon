@@ -34,7 +34,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from typing import Any, Iterable, Mapping, MutableMapping, Sequence
+from typing import Any, Callable, Iterable, Mapping, MutableMapping, Sequence, TypeVar
 from urllib.parse import unquote, urlparse
 
 
@@ -61,6 +61,13 @@ LEGACY_LABELS = (
 PLATFORM_LINE = "@sSteamCmdForcePlatformType windows"
 STEAM_EXE_WINDOWS = "C:/Program Files (x86)/Steam/steam.exe"
 MANAGED_DESCRIPTION_TEMPLATE = "Play through {name} (Kaon)"
+T = TypeVar("T")
+
+# Active transaction snapshots receive exact post-write fingerprints from the
+# atomic helpers below. Rollback uses those fingerprints as a compare-and-swap
+# guard: if Steam, the user, or another process changes a file after Kaon does,
+# Kaon leaves the newer bytes alone and preserves a recovery snapshot.
+_ACTIVE_MUTATION_SNAPSHOTS: list[Any] = []
 
 
 class SetupError(RuntimeError):
@@ -85,6 +92,40 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def path_fingerprint(path: Path) -> tuple[Any, ...]:
+    """Return an exact, comparison-friendly identity for a managed path."""
+
+    try:
+        metadata = path.lstat()
+    except FileNotFoundError:
+        return ("missing",)
+    if stat.S_ISLNK(metadata.st_mode):
+        return ("symlink", os.readlink(path))
+    if stat.S_ISREG(metadata.st_mode):
+        return ("file", sha256_file(path), stat.S_IMODE(metadata.st_mode))
+    return ("other", stat.S_IFMT(metadata.st_mode))
+
+
+def _record_active_path_mutation(
+    path: Path, fingerprint: tuple[Any, ...] | None = None
+) -> None:
+    for snapshot in tuple(_ACTIVE_MUTATION_SNAPSHOTS):
+        snapshot.record_path_mutation(path, fingerprint)
+
+
+def _record_active_dock_mutation(data: Mapping[str, Any]) -> None:
+    for snapshot in tuple(_ACTIVE_MUTATION_SNAPSHOTS):
+        snapshot.record_dock_mutation(data)
+
+
+def _prepare_active_dock_mutation(before: Mapping[str, Any]) -> None:
+    fresh = dock_export()
+    if fresh != before:
+        raise SetupError("The Dock changed while Kaon was preparing an update; try again.", 75)
+    for snapshot in tuple(_ACTIVE_MUTATION_SNAPSHOTS):
+        snapshot.assert_dock_preimage(before)
 
 
 def run(
@@ -129,6 +170,7 @@ def atomic_write(path: Path, data: bytes, mode: int = 0o600) -> None:
             os.fsync(stream.fileno())
         os.replace(temporary, path)
         fsync_directory(path.parent)
+        _record_active_path_mutation(path)
     finally:
         temporary.unlink(missing_ok=True)
 
@@ -146,6 +188,7 @@ def atomic_symlink(path: Path, target: str) -> None:
         staged.symlink_to(target)
         os.replace(staged, path)
         fsync_directory(path.parent)
+        _record_active_path_mutation(path)
     finally:
         staged.unlink(missing_ok=True)
 
@@ -164,8 +207,20 @@ def atomic_copy(source: Path, destination: Path, mode: int) -> None:
             os.fsync(stream.fileno())
         os.replace(temporary, destination)
         fsync_directory(destination.parent)
+        _record_active_path_mutation(destination)
     finally:
         temporary.unlink(missing_ok=True)
+
+
+def tracked_unlink(path: Path, *, missing_ok: bool = True) -> bool:
+    """Unlink a managed path and make the deletion visible to rollback."""
+
+    existed = path.is_symlink() or path.exists()
+    path.unlink(missing_ok=missing_ok)
+    if existed:
+        fsync_directory(path.parent)
+        _record_active_path_mutation(path, ("missing",))
+    return existed
 
 
 def load_json(path: Path, default: Any) -> Any:
@@ -224,6 +279,15 @@ def acquire_setup_lock():
     return stream
 
 
+def acquire_steam_start_lock():
+    """Serialize startup attempts from setup, launchd, and the UI."""
+
+    ensure_private_directories()
+    stream = (SUPPORT_ROOT / "steam-start.lock").open("a+")
+    fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
+    return stream
+
+
 def resource_path(relative: str) -> Path:
     candidates: list[Path] = []
     frozen_root = getattr(sys, "_MEIPASS", None)
@@ -253,6 +317,15 @@ def require_native_steam_closed() -> None:
             "Quit native macOS Steam completely before installing, repairing, or uninstalling Kaon.",
             75,
         )
+
+
+def native_steam_mutation(action: Callable[[], T]) -> T:
+    """Run one bounded native-Steam mutation with checks on both sides."""
+
+    require_native_steam_closed()
+    result = action()
+    require_native_steam_closed()
+    return result
 
 
 def steam_paths(config: Mapping[str, Any]) -> dict[str, Path]:
@@ -599,8 +672,7 @@ def restore_installed_file(path: Path, installed_hash: str, state: Mapping[str, 
         return "unknown"
     kind = original.get("kind")
     if kind == "missing" or not original.get("existed", True):
-        path.unlink()
-        fsync_directory(path.parent)
+        tracked_unlink(path, missing_ok=False)
         return "removed"
     if kind == "symlink":
         atomic_symlink(path, str(original["target"]))
@@ -681,7 +753,7 @@ def repair_launch_entries(config: Mapping[str, Any], paths: Mapping[str, Path], 
         raise SetupError(f"Kaon's launch repair module is unavailable: {error}", 69) from error
     description = MANAGED_DESCRIPTION_TEMPLATE.format(name=cross_over_display_name(config))
     try:
-        return kaon_repair.repair(
+        result = kaon_repair.repair(
             paths["appinfo"],
             paths["shared_steamapps"],
             appinfo_module_path(),
@@ -690,6 +762,19 @@ def repair_launch_entries(config: Mapping[str, Any], paths: Mapping[str, Path], 
             description,
             check=check,
         )
+        if not check:
+            if result.appinfo_postimage is not None:
+                digest, mode = result.appinfo_postimage
+                _record_active_path_mutation(
+                    paths["appinfo"], ("file", digest, int(mode))
+                )
+            if result.state_postimage is not None:
+                digest, mode = result.state_postimage
+                _record_active_path_mutation(
+                    SUPPORT_ROOT / "state/managed-apps.json",
+                    ("file", digest, int(mode)),
+                )
+        return result
     except kaon_repair.KaonRepairError as error:
         raise SetupError(str(error), getattr(error, "exit_code", 70)) from error
 
@@ -745,7 +830,7 @@ def install_agent(label: str, plist: Mapping[str, Any], enabled: bool, state: Mu
     path = LAUNCH_AGENT_ROOT / f"{label}.plist"
     bootout_agent(label, path)
     if not enabled:
-        path.unlink(missing_ok=True)
+        tracked_unlink(path)
         return
     record_original(path, state)
     atomic_write(path, plistlib.dumps(dict(plist), fmt=plistlib.FMT_XML, sort_keys=False), 0o600)
@@ -797,7 +882,7 @@ def disable_legacy_agents(state: MutableMapping[str, Any]) -> None:
         migrated.parent.mkdir(parents=True, exist_ok=True)
         if not migrated.exists():
             shutil.copy2(path, migrated)
-        path.unlink()
+        tracked_unlink(path, missing_ok=False)
 
 
 KNOWN_TRAY_PREFIXES = (
@@ -990,6 +1075,7 @@ def dock_import(data: Mapping[str, Any]) -> None:
         if result.returncode != 0:
             raise SetupError(f"Could not update the Dock: {result.stderr.decode(errors='replace').strip()}")
         run(("/usr/bin/killall", "Dock"))
+        _record_active_dock_mutation(data)
     finally:
         path.unlink(missing_ok=True)
 
@@ -1012,6 +1098,7 @@ def hide_crossover_dock_tile(config: Mapping[str, Any], state: MutableMapping[st
     for index, tile in enumerate(tiles):
         path = dock_tile_path(tile) if isinstance(tile, Mapping) else None
         if path is not None and canonical_path(path) == selected:
+            _prepare_active_dock_mutation(deepcopy(data))
             removed = tiles.pop(index)
             encoded_tile = base64.b64encode(
                 plistlib.dumps(removed, fmt=plistlib.FMT_BINARY)
@@ -1048,6 +1135,7 @@ def restore_crossover_dock_tile(state: MutableMapping[str, Any]) -> bool:
         raise SetupError(f"Kaon's saved Dock tile is invalid: {error}", 65) from error
     if not isinstance(removed_tile, Mapping):
         raise SetupError("Kaon's saved Dock tile has an invalid structure.", 65)
+    _prepare_active_dock_mutation(deepcopy(data))
     index = min(int(dock_state.get("index", len(tiles))), len(tiles))
     tiles.insert(index, dict(removed_tile))
     dock_import(data)
@@ -1055,8 +1143,14 @@ def restore_crossover_dock_tile(state: MutableMapping[str, Any]) -> bool:
     return True
 
 
+def _is_native_steam_path(path: Path) -> bool:
+    candidate = Path(os.path.abspath(os.path.expanduser(os.fspath(path))))
+    root = Path(os.path.abspath(os.path.expanduser(os.fspath(STEAM_ROOT))))
+    return candidate == root or root in candidate.parents
+
+
 class MutationSnapshot:
-    """Immediate rollback snapshot for one install or repair transaction."""
+    """Compare-and-restore rollback for one install or repair transaction."""
 
     def __init__(self, paths: Iterable[Path], labels: Iterable[str]):
         self._temporary_path: Path | None = Path(
@@ -1064,51 +1158,121 @@ class MutationSnapshot:
         )
         self._keep_temporary = False
         self._records: list[dict[str, Any]] = []
+        self._record_by_path: dict[str, dict[str, Any]] = {}
+        self._active = False
         seen: set[str] = set()
-        for path in paths:
-            key = os.fspath(path)
-            if key in seen:
-                continue
-            seen.add(key)
-            record: dict[str, Any] = {"path": path}
-            if path.is_symlink():
-                record.update({"kind": "symlink", "target": os.readlink(path)})
-            elif path.is_file():
-                backup = self._temporary_path / f"{len(self._records):04d}.backup"
-                shutil.copy2(path, backup)
-                record.update(
-                    {
-                        "kind": "file",
-                        "backup": backup,
-                        "mode": stat.S_IMODE(path.stat().st_mode),
-                    }
-                )
-            elif path.exists():
-                raise SetupError(f"Refusing to snapshot a non-file managed path: {path}", 65)
-            else:
-                record["kind"] = "missing"
-            self._records.append(record)
-        self._labels = tuple(dict.fromkeys(labels))
-        self._loaded = {label: service_loaded(label) for label in self._labels}
-        self._dock = dock_export()
+        try:
+            for path in paths:
+                key = os.path.normpath(os.path.expanduser(os.fspath(path)))
+                if key in seen:
+                    continue
+                seen.add(key)
+                before = path_fingerprint(path)
+                if before[0] == "other":
+                    raise SetupError(
+                        f"Refusing to snapshot a non-file managed path: {path}", 65
+                    )
+                record: dict[str, Any] = {
+                    "path": path,
+                    "before": before,
+                    "expected": None,
+                }
+                if before[0] == "file":
+                    backup = self._temporary_path / f"{len(self._records):04d}.backup"
+                    shutil.copy2(path, backup)
+                    if path_fingerprint(path) != before:
+                        raise SetupError(
+                            f"Managed file changed while its rollback snapshot was created: {path}",
+                            75,
+                        )
+                    record.update(
+                        {
+                            "kind": "file",
+                            "backup": backup,
+                            "mode": int(before[2]),
+                        }
+                    )
+                elif before[0] == "symlink":
+                    record.update({"kind": "symlink", "target": str(before[1])})
+                else:
+                    record["kind"] = "missing"
+                self._records.append(record)
+                self._record_by_path[key] = record
+            self._labels = tuple(dict.fromkeys(labels))
+            self._loaded = {label: service_loaded(label) for label in self._labels}
+            self._dock_before = dock_export()
+            self._dock_expected: dict[str, Any] | None = None
+        except Exception:
+            if self._temporary_path is not None:
+                shutil.rmtree(self._temporary_path, ignore_errors=True)
+                self._temporary_path = None
+            raise
+        _ACTIVE_MUTATION_SNAPSHOTS.append(self)
+        self._active = True
+
+    def record_path_mutation(
+        self, path: Path, fingerprint: tuple[Any, ...] | None = None
+    ) -> None:
+        key = os.path.normpath(os.path.expanduser(os.fspath(path)))
+        record = self._record_by_path.get(key)
+        if record is not None:
+            record["expected"] = fingerprint or path_fingerprint(path)
+
+    def record_dock_mutation(self, data: Mapping[str, Any]) -> None:
+        self._dock_expected = deepcopy(dict(data))
+
+    def assert_dock_preimage(self, before: Mapping[str, Any]) -> None:
+        expected = self._dock_expected
+        if expected is None:
+            expected = self._dock_before
+        if before != expected:
+            raise SetupError(
+                "The Dock changed after Kaon's previous update; leaving it untouched.",
+                75,
+            )
 
     def rollback(self) -> None:
+        conflicts: list[str] = []
         for label in self._labels:
             bootout_agent(label, LAUNCH_AGENT_ROOT / f"{label}.plist")
         for record in reversed(self._records):
             path = record["path"]
+            before = record["before"]
+            current = path_fingerprint(path)
+            if current == before:
+                continue
+            expected = record.get("expected")
+            if expected is None:
+                conflicts.append(f"unclaimed change at {path}")
+                continue
+            if current != expected:
+                conflicts.append(f"newer external change at {path}")
+                continue
+            if _is_native_steam_path(path) and native_steam_running():
+                conflicts.append(f"native Steam is using {path}")
+                continue
             kind = record["kind"]
             if kind == "missing":
                 if path.is_symlink() or path.is_file():
-                    path.unlink(missing_ok=True)
+                    tracked_unlink(path)
                 elif path.exists():
-                    raise SetupError(f"Rollback refused to remove a directory at managed file path: {path}", 65)
+                    conflicts.append(f"directory appeared at managed file path {path}")
             elif kind == "symlink":
                 atomic_symlink(path, str(record["target"]))
             elif kind == "file":
                 atomic_copy(record["backup"], path, int(record["mode"]))
-        if self._dock is not None and dock_export() != self._dock:
-            dock_import(self._dock)
+
+        if self._dock_expected is not None:
+            current_dock = dock_export()
+            if current_dock == self._dock_before:
+                pass
+            elif current_dock != self._dock_expected:
+                conflicts.append("the Dock changed after Kaon updated it")
+            elif self._dock_before is None:
+                conflicts.append("the original Dock state was unavailable")
+            else:
+                dock_import(self._dock_before)
+
         domain = f"gui/{os.getuid()}"
         for label, was_loaded in self._loaded.items():
             if not was_loaded:
@@ -1121,8 +1285,20 @@ class MutationSnapshot:
                     raise SetupError(
                         f"Rollback restored {path} but could not reload it: {restored.stderr.decode(errors='replace').strip()}"
                     )
+        if conflicts:
+            raise SetupError(
+                "Rollback left newer or unverified changes untouched: "
+                + "; ".join(conflicts),
+                75,
+            )
 
     def close(self) -> None:
+        if self._active:
+            try:
+                _ACTIVE_MUTATION_SNAPSHOTS.remove(self)
+            except ValueError:
+                pass
+            self._active = False
         if self._temporary_path is not None and not self._keep_temporary:
             shutil.rmtree(self._temporary_path, ignore_errors=True)
             self._temporary_path = None
@@ -1193,6 +1369,11 @@ def steam_processes(paths: Mapping[str, Path]) -> list[int]:
 
 
 def ensure_windows_steam(config: Mapping[str, Any], paths: Mapping[str, Path]) -> bool:
+    with acquire_steam_start_lock():
+        return _ensure_windows_steam_unlocked(config, paths)
+
+
+def _ensure_windows_steam_unlocked(config: Mapping[str, Any], paths: Mapping[str, Path]) -> bool:
     if steam_processes(paths):
         return False
     wine = Path(str(config["crossover_app"])) / "Contents/SharedSupport/CrossOver/bin/wine"
@@ -1207,8 +1388,17 @@ def ensure_windows_steam(config: Mapping[str, Any], paths: Mapping[str, Path]) -
         older = log_path.with_suffix(log_path.suffix + ".1")
         older.unlink(missing_ok=True)
         log_path.replace(older)
-    with log_path.open("ab") as log:
-        process = subprocess.Popen(arguments, stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True)
+    try:
+        with log_path.open("ab") as log:
+            process = subprocess.Popen(
+                arguments,
+                stdin=subprocess.DEVNULL,
+                stdout=log,
+                stderr=log,
+                start_new_session=True,
+            )
+    except OSError as error:
+        raise SetupError(f"Windows Steam could not be launched: {error}", 75) from error
     for _ in range(80):
         if steam_processes(paths):
             return True
@@ -1265,14 +1455,20 @@ def reconcile(config: Mapping[str, Any], state: MutableMapping[str, Any], includ
     paths = preflight(config)
     runtime = install_runtime(state)
     changes: list[str] = []
-    if ensure_platform_override(paths["steam_dev"], state):
+    if native_steam_mutation(lambda: ensure_platform_override(paths["steam_dev"], state)):
         changes.append("native Steam Windows platform override")
     label = f"Shared {cross_over_display_name(config)} Library"
     for library_file in (STEAM_ROOT / "steamapps/libraryfolders.vdf", STEAM_ROOT / "config/libraryfolders.vdf"):
-        if ensure_library_entry(library_file, paths["shared_root"], state, label):
+        if native_steam_mutation(
+            lambda library_file=library_file: ensure_library_entry(
+                library_file, paths["shared_root"], state, label
+            )
+        ):
             changes.append(os.fspath(library_file))
     changes.extend(install_launchers(paths, state))
-    repair_result = repair_launch_entries(config, paths, check=False)
+    repair_result = native_steam_mutation(
+        lambda: repair_launch_entries(config, paths, check=False)
+    )
     if repair_result.changed:
         changes.append(f"{len(repair_result.changed_app_ids)} game launch entries")
     tray_status = {"active": False, "degraded": False, "message": "disabled"}
@@ -1350,6 +1546,28 @@ def confirm_install(config: Mapping[str, Any], assume_yes: bool, quiet: bool = F
         raise SetupError("Setup cancelled.", 64)
 
 
+def add_post_install_startup_result(
+    config: Mapping[str, Any], result: MutableMapping[str, Any]
+) -> None:
+    """Start Windows Steam after commit without turning success into failure."""
+
+    if not config["start_at_login"]:
+        result["windows_steam_started"] = False
+        return
+    try:
+        result["windows_steam_started"] = ensure_windows_steam(
+            config, steam_paths(config)
+        )
+    except SetupError as error:
+        result["windows_steam_started"] = False
+        result.setdefault("warnings", []).append(
+            "Kaon was installed successfully, but Windows Steam could not start "
+            f"automatically: {error}. Automatic startup remains enabled; use "
+            "Maintenance → Start Configured Windows Steam later and review "
+            "~/Library/Logs/Kaon/crossover-steam.out.log if needed."
+        )
+
+
 def install_action(args: argparse.Namespace) -> dict[str, Any]:
     previous = load_config(required=False)
     config = build_config(args, previous)
@@ -1366,6 +1584,7 @@ def install_action(args: argparse.Namespace) -> dict[str, Any]:
             (*LABELS.values(), *LEGACY_LABELS),
         )
         try:
+            require_native_steam_closed()
             state = load_state()
             atomic_json(CONFIG_PATH, config)
             result = reconcile(config, state)
@@ -1384,10 +1603,7 @@ def install_action(args: argparse.Namespace) -> dict[str, Any]:
             raise
         finally:
             snapshot.close()
-    if config["start_at_login"]:
-        result["windows_steam_started"] = ensure_windows_steam(config, steam_paths(config))
-    else:
-        result["windows_steam_started"] = False
+    add_post_install_startup_result(config, result)
     return result
 
 
@@ -1402,6 +1618,7 @@ def repair_action(args: argparse.Namespace) -> dict[str, Any]:
             (*LABELS.values(), *LEGACY_LABELS),
         )
         try:
+            require_native_steam_closed()
             atomic_json(CONFIG_PATH, config)
             result = reconcile(config, load_state())
         except Exception as error:
@@ -1568,9 +1785,16 @@ def uninstall_action(args: argparse.Namespace) -> dict[str, Any]:
         elif disposition != "unknown":
             warnings.append(f"Left {path} untouched during uninstall ({disposition}).")
     if state.get("steam_dev", {}).get("line_added_by_kaon") and paths["steam_dev"].is_file():
-        lines = paths["steam_dev"].read_text(encoding="utf-8").splitlines()
-        remaining = [line for line in lines if line.strip() != PLATFORM_LINE]
-        atomic_write(paths["steam_dev"], (("\n".join(remaining) + "\n") if remaining else "").encode(), 0o600)
+        def remove_platform_override() -> None:
+            lines = paths["steam_dev"].read_text(encoding="utf-8").splitlines()
+            remaining = [line for line in lines if line.strip() != PLATFORM_LINE]
+            atomic_write(
+                paths["steam_dev"],
+                (("\n".join(remaining) + "\n") if remaining else "").encode(),
+                0o600,
+            )
+
+        native_steam_mutation(remove_platform_override)
     state["uninstalled_at"] = utc_now()
     archive = BACKUP_ROOT / "uninstall-state" / f"{datetime.now().strftime('%Y%m%d-%H%M%S-%f')}-install-state.json"
     atomic_json(archive, state)

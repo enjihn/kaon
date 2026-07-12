@@ -445,6 +445,7 @@ rm -f "$ZIP_PATH" "$DMG_PATH" "$CHECKSUM_PATH" "$SIGNING_STATUS_PATH"
 DMG_STAGE="$BUILD_ROOT/dmg"
 mkdir -p "$DMG_STAGE"
 /usr/bin/ditto "$APP_BUNDLE" "$DMG_STAGE/$APP_NAME"
+/bin/ln -s /Applications "$DMG_STAGE/Applications"
 /usr/bin/hdiutil create \
     -quiet \
     -ov \

@@ -162,9 +162,73 @@ private struct SetupView: View {
 
                         TextField("Bottle name", text: $viewModel.configuration.bottleName)
                             .textFieldStyle(.roundedBorder)
+                            .onChange(of: viewModel.configuration.bottleName) { _ in
+                                viewModel.refreshPrerequisites()
+                            }
                         Text("Use the bottle that contains Windows Steam. The default bottle name is “Steam.”")
                             .font(.caption)
                             .foregroundStyle(.secondary)
+
+                        if !viewModel.detectedSteamBottles.isEmpty {
+                            Menu("Choose a detected Steam bottle") {
+                                ForEach(viewModel.detectedSteamBottles, id: \.self) { bottle in
+                                    Button(bottle) {
+                                        viewModel.configuration.bottleName = bottle
+                                        viewModel.refreshPrerequisites()
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                SettingsCard(title: "Before you install", symbol: "checkmark.shield") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        PrerequisiteRow(
+                            ready: viewModel.selectedCrossOverApplicationIsValid,
+                            readyText: "CrossOver is selected",
+                            missingText: "Choose a valid installed CrossOver app"
+                        )
+                        Divider()
+                        PrerequisiteRow(
+                            ready: viewModel.nativeSteamReady,
+                            readyText: "Native Steam has been opened and initialized",
+                            missingText: "Open native Steam once and let the Library load"
+                        )
+                        Divider()
+                        PrerequisiteRow(
+                            ready: !viewModel.nativeSteamRunning,
+                            readyText: "Native Steam is fully quit and safe to configure",
+                            missingText: "Quit native Steam, then click Refresh Checks"
+                        )
+                        Divider()
+                        PrerequisiteRow(
+                            ready: viewModel.selectedBottleHasWindowsSteam,
+                            readyText: "Windows Steam was found in this bottle",
+                            missingText: "Install Windows Steam in this CrossOver bottle"
+                        )
+                        Divider()
+                        PrerequisiteRow(
+                            ready: viewModel.selectedBottleMatchesEdition,
+                            readyText: "This bottle matches the selected CrossOver edition",
+                            missingText: "This bottle requires CrossOver Preview—select Preview above"
+                        )
+
+                        Text("Quit native Steam completely before clicking Install. Kaon will stop safely and explain what to do if Steam is still open.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+
+                        HStack {
+                            Button("Open or Get Native Steam") { viewModel.openNativeSteam() }
+                            Button("Open Selected CrossOver") { viewModel.openSelectedCrossOver() }
+                                .disabled(!viewModel.selectedCrossOverApplicationIsValid)
+                            Spacer()
+                            Button("Refresh Checks") {
+                                viewModel.refreshDiscovery()
+                                viewModel.refreshPrerequisites()
+                            }
+                        }
                     }
                 }
 
@@ -177,7 +241,7 @@ private struct SetupView: View {
                     Divider()
                     OptionRow(
                         title: "Start Windows Steam at login",
-                        detail: "Starts the selected bottle’s Steam after you sign in. You can also start it manually from Maintenance. Native Steam remains the interface you normally use.",
+                        detail: "Starts the selected bottle’s Steam immediately after setup and after future sign-ins. You can stop or start it from Maintenance. Native Steam remains the interface you normally use.",
                         isOn: $viewModel.configuration.startAtLogin
                     )
                 }
@@ -215,6 +279,11 @@ private struct SetupView: View {
                 }
 
                 HStack {
+                    if !viewModel.validationErrors(for: .install).isEmpty {
+                        Text("You can review now; Install stays unavailable until the orange items are fixed.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                     Spacer()
                     Button("Review Setup") { continueAction() }
                         .buttonStyle(.borderedProminent)
@@ -294,6 +363,34 @@ private struct ReviewInstallView: View {
                     Text("It links the selected CrossOver Steam library to native Steam, installs Kaon’s launch helpers, updates Steam launch metadata safely, and enables only the automations selected above. Existing game files are reused, not copied.")
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
+                    Text("After setup, always choose “Shared CrossOver … Library” in Steam’s Install dialog. New games in that library are added to Kaon automatically.")
+                        .font(.callout.weight(.semibold))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                if viewModel.installationCompleted {
+                    SettingsCard(title: "You're ready to install a PC game", symbol: "play.circle.fill") {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("1. Open native Steam.")
+                            Text("2. Click Install on a Windows game and choose “Shared CrossOver … Library.”")
+                            if viewModel.configuration.automaticRepair {
+                                Text("3. After a newly downloaded game finishes, choose Steam → Quit Steam. Wait up to one minute, then reopen Steam.")
+                            } else {
+                                Text("3. After a newly downloaded game finishes, quit Steam, open Maintenance, click Repair Kaon, then reopen Steam.")
+                            }
+                            Text("4. Click Play and choose “Play through … (Kaon).”")
+                            Text(viewModel.configuration.automaticRepair
+                                 ? "You only need the quit-and-reopen step after installing a new game or when Kaon says a repair is waiting."
+                                 : "Because automatic repair is off, run Repair Kaon after every newly installed game.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            HStack {
+                                Spacer()
+                                Button("Open Native Steam") { viewModel.openNativeSteam() }
+                                    .buttonStyle(.borderedProminent)
+                            }
+                        }
+                    }
                 }
 
                 HStack {
@@ -437,6 +534,18 @@ private struct OptionRow: View {
             }
         }
         .toggleStyle(.switch)
+    }
+}
+
+private struct PrerequisiteRow: View {
+    let ready: Bool
+    let readyText: String
+    let missingText: String
+
+    var body: some View {
+        Label(ready ? readyText : missingText, systemImage: ready ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+            .foregroundStyle(ready ? .green : .orange)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

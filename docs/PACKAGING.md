@@ -37,7 +37,9 @@ native runner for each architecture and publishes both variants.
 Without a signing identity the script applies an ad-hoc signature. This is
 useful for development and produces fully inspectable ZIP and DMG artifacts,
 but it does not establish a trusted developer identity. Gatekeeper may require
-the downloader to approve an ad-hoc build manually.
+manual approval. GitHub permits this only for CI and manually triggered test
+artifacts; tagged public releases fail unless Developer ID signing and Apple
+notarization credentials are complete.
 
 The script accepts these command-line options:
 
@@ -107,8 +109,8 @@ shasum -a 256 -c SHA256SUMS-arm64
 
 ## GitHub Actions secrets
 
-The release workflow always works without secrets and produces an ad-hoc
-development release. To produce a trusted public release, configure:
+The release workflow works without secrets only for manually triggered ad-hoc
+test artifacts. Tagged public releases require:
 
 - `MACOS_CERTIFICATE_P12`: base64-encoded Developer ID Application `.p12`;
 - `MACOS_CERTIFICATE_PASSWORD`: password protecting that `.p12`;
@@ -130,11 +132,11 @@ builds both native ad-hoc releases, audits each ZIP, verifies checksums, and
 executes the frozen helper in an environment that does not expose Python.
 
 `.github/workflows/release.yml` runs on `v*` tags or manually. Its native runner
-matrix freezes, signs, optionally notarizes, and uploads both architectures.
-Tag builds publish both ZIPs, both DMGs, and one consolidated `SHA256SUMS` file
-to a GitHub release. A manual run creates architecture-labeled workflow
-artifacts without publishing a GitHub release, which is useful for
-release-candidate inspection.
+matrix freezes, signs, and uploads both architectures. Tag builds require
+Developer ID signing and notarization, verify both status records, then publish
+both ZIPs, both DMGs, and one consolidated `SHA256SUMS` file. A manual run may
+create architecture-labeled ad-hoc workflow artifacts without publishing a
+GitHub release, which is useful for release-candidate inspection.
 
 Before tagging a public version, complete a clean-machine smoke test on both an
 Apple Silicon Mac and an Intel Mac using current regular CrossOver and, where

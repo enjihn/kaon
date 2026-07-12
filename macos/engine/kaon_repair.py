@@ -102,6 +102,8 @@ class RepairResult:
     skipped: tuple[SkippedApp, ...]
     state_changed: bool = False
     check: bool = False
+    appinfo_postimage: tuple[str, int] | None = None
+    state_postimage: tuple[str, int] | None = None
 
     @property
     def ok(self) -> bool:
@@ -666,6 +668,18 @@ def repair(
             staged_state = None
             fsync_directory(state_path.parent)
 
+        _assert_steam_closed()
+        appinfo_postimage = (
+            (hash_file(vdf), stat.S_IMODE(vdf.stat().st_mode))
+            if changed_app_ids
+            else None
+        )
+        state_postimage = (
+            (hash_file(state_path), stat.S_IMODE(state_path.stat().st_mode))
+            if state_changed
+            else None
+        )
+
         return RepairResult(
             managed=tuple(managed),
             changed_app_ids=tuple(changed_app_ids),
@@ -673,6 +687,8 @@ def repair(
             skipped=tuple(skipped),
             state_changed=state_changed,
             check=False,
+            appinfo_postimage=appinfo_postimage,
+            state_postimage=state_postimage,
         )
     finally:
         if temporary_vdf is not None:
@@ -869,6 +885,8 @@ def remove(
             os.replace(staged_state, state_path)
             staged_state = None
             fsync_directory(state_path.parent)
+
+        _assert_steam_closed()
 
         return RemoveResult(
             removed_app_ids=tuple(removed_app_ids),

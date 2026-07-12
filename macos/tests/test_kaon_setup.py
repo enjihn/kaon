@@ -5,6 +5,7 @@ from pathlib import Path
 import plistlib
 import sys
 import tempfile
+import threading
 import unittest
 from unittest import mock
 
@@ -186,6 +187,72 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(plistlib.loads(encoded)["ProgramArguments"][0], "/tmp/kaon setup")
 
 
+class SteamStartupTests(unittest.TestCase):
+    def test_concurrent_start_attempts_launch_only_once(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            running = threading.Event()
+            start_together = threading.Barrier(2)
+            launches = []
+            results = []
+            errors = []
+
+            class FakeProcess:
+                def poll(self):
+                    return None
+
+            def fake_popen(*args, **kwargs):
+                launches.append((args, kwargs))
+                running.set()
+                return FakeProcess()
+
+            def worker():
+                try:
+                    start_together.wait()
+                    results.append(
+                        kaon_setup.ensure_windows_steam(
+                            {"crossover_app": str(root / "CrossOver.app"), "bottle": "Steam", "hide_tray": False},
+                            {"windows_steam": root / "steam.exe", "shared_root": root},
+                        )
+                    )
+                except Exception as error:  # pragma: no cover - assertion reports it
+                    errors.append(error)
+
+            with mock.patch.object(kaon_setup, "SUPPORT_ROOT", root / "support"), mock.patch.object(
+                kaon_setup, "BACKUP_ROOT", root / "support/backups"
+            ), mock.patch.object(kaon_setup, "LOG_ROOT", root / "logs"), mock.patch.object(
+                kaon_setup, "LAUNCH_AGENT_ROOT", root / "agents"
+            ), mock.patch.object(
+                kaon_setup, "steam_processes", side_effect=lambda paths: [123] if running.is_set() else []
+            ), mock.patch.object(kaon_setup.subprocess, "Popen", side_effect=fake_popen):
+                threads = [threading.Thread(target=worker) for _ in range(2)]
+                for thread in threads:
+                    thread.start()
+                for thread in threads:
+                    thread.join(timeout=5)
+
+            self.assertFalse(errors)
+            self.assertEqual(len(launches), 1)
+            self.assertEqual(sorted(results), [False, True])
+
+    def test_post_install_start_failure_is_a_warning(self):
+        result = {}
+        config = {
+            "start_at_login": True,
+            "crossover_app": "/Applications/CrossOver.app",
+            "bottle": "Steam",
+        }
+        with mock.patch.object(
+            kaon_setup,
+            "ensure_windows_steam",
+            side_effect=kaon_setup.SetupError("timed out", 75),
+        ):
+            kaon_setup.add_post_install_startup_result(config, result)
+
+        self.assertFalse(result["windows_steam_started"])
+        self.assertIn("installed successfully", result["warnings"][0])
+
+
 class DockStateTests(unittest.TestCase):
     def test_removed_tile_with_bookmark_bytes_round_trips_through_json(self):
         app_path = "/Applications/CrossOver Preview.app"
@@ -237,10 +304,9 @@ class TransactionTests(unittest.TestCase):
                     (),
                 )
             try:
-                original.write_bytes(b"changed")
-                link.unlink()
-                link.write_text("not a link", encoding="utf-8")
-                missing.write_text("temporary", encoding="utf-8")
+                kaon_setup.atomic_write(original, b"changed")
+                kaon_setup.atomic_write(link, b"not a link")
+                kaon_setup.atomic_write(missing, b"temporary")
                 snapshot.rollback()
             finally:
                 snapshot.close()
@@ -249,6 +315,39 @@ class TransactionTests(unittest.TestCase):
             self.assertTrue(link.is_symlink())
             self.assertEqual(link.readlink(), Path("target"))
             self.assertFalse(missing.exists())
+
+    def test_snapshot_never_overwrites_a_newer_external_edit(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "managed"
+            path.write_bytes(b"original")
+            with mock.patch.object(kaon_setup, "service_loaded", return_value=False), mock.patch.object(
+                kaon_setup, "dock_export", return_value=None
+            ):
+                snapshot = kaon_setup.MutationSnapshot((path,), ())
+            try:
+                kaon_setup.atomic_write(path, b"kaon")
+                path.write_bytes(b"newer external bytes")
+                with self.assertRaises(kaon_setup.SetupError):
+                    snapshot.rollback()
+            finally:
+                snapshot.close()
+            self.assertEqual(path.read_bytes(), b"newer external bytes")
+
+    def test_snapshot_never_overwrites_an_unclaimed_change(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "managed"
+            path.write_bytes(b"original")
+            with mock.patch.object(kaon_setup, "service_loaded", return_value=False), mock.patch.object(
+                kaon_setup, "dock_export", return_value=None
+            ):
+                snapshot = kaon_setup.MutationSnapshot((path,), ())
+            try:
+                path.write_bytes(b"external bytes")
+                with self.assertRaises(kaon_setup.SetupError):
+                    snapshot.rollback()
+            finally:
+                snapshot.close()
+            self.assertEqual(path.read_bytes(), b"external bytes")
 
     def test_fresh_ownership_state_preserves_each_install_cycles_preexisting_file(self):
         with tempfile.TemporaryDirectory() as temporary:
