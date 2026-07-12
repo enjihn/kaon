@@ -1,0 +1,126 @@
+name: macOS CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test (Apple Silicon)
+    runs-on: macos-15
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.13'
+          architecture: arm64
+
+      - name: Validate scripts and property lists
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n macos/scripts/build-release.sh
+
+          first_line="$(head -n 1 macos/bin/kaon-setup)"
+          case "$first_line" in
+            *python*) python -m py_compile macos/bin/kaon-setup ;;
+            *zsh*) zsh -n macos/bin/kaon-setup ;;
+            *bash*) bash -n macos/bin/kaon-setup ;;
+            *) echo "Unsupported kaon-setup interpreter: $first_line" >&2; exit 1 ;;
+          esac
+
+          while IFS= read -r -d '' plist; do
+            plutil -lint "$plist"
+          done < <(find macos -type f -name '*.plist' -print0)
+
+      - name: Test Python setup engine
+        run: |
+          python -m compileall -q macos/engine
+          python -m unittest discover -s macos/tests -p 'test_*.py' -v
+
+      - name: Test native installer
+        run: swift test --package-path macos/installer
+
+  package:
+    name: Package (Apple Silicon)
+    needs: test
+    runs-on: macos-15
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.13'
+          architecture: arm64
+
+      - name: Install pinned packager
+        run: python -m pip install --disable-pip-version-check 'pyinstaller==6.21.0'
+
+      - name: Build app, ZIP, and DMG
+        env:
+          KAON_PYTHON: python
+        run: macos/scripts/build-release.sh --version 0.0.0-ci --output dist
+
+      - name: Audit release payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          zip_path="$(find dist -maxdepth 1 -type f -name 'Kaon-Setup-*.zip' -print -quit)"
+          [[ -n "$zip_path" ]]
+          listing="$(mktemp)"
+          unzip -Z1 "$zip_path" > "$listing"
+
+          if grep -Eiq '(^|/)(lsteamclient|Steam\.app|CrossOver( Preview)?\.app)(/|$)|\.(exe|dll|so|dylib|a)(/|$)|\.framework(/|$)' "$listing"; then
+            echo "Forbidden content found in release ZIP:" >&2
+            grep -Ei '(^|/)(lsteamclient|Steam\.app|CrossOver( Preview)?\.app)(/|$)|\.(exe|dll|so|dylib|a)(/|$)|\.framework(/|$)' "$listing" >&2
+            exit 1
+          fi
+
+          grep -q 'Kaon Setup.app/Contents/MacOS/KaonInstaller' "$listing"
+          grep -q 'Kaon Setup.app/Contents/Resources/Kaon/bin/kaon-setup' "$listing"
+          grep -q 'Kaon Setup.app/Contents/Resources/Source/macos/engine/kaon_setup.py' "$listing"
+          grep -q 'Kaon Setup.app/Contents/Resources/Source/macos/engine/kaon_repair.py' "$listing"
+          grep -q 'Kaon Setup.app/Contents/Resources/Source/steammetadataeditor/src/appinfo.py' "$listing"
+          grep -q 'Kaon Setup.app/Contents/Resources/Licenses/GPL-3.0-or-later.txt' "$listing"
+          grep -q 'Kaon Setup.app/Contents/Resources/Licenses/Python.txt' "$listing"
+          grep -q 'Kaon Setup.app/Contents/Resources/Licenses/PyInstaller.txt' "$listing"
+
+          extract="$(mktemp -d)"
+          /usr/bin/ditto -x -k "$zip_path" "$extract"
+          helper="$extract/Kaon Setup.app/Contents/Resources/Kaon/bin/kaon-setup"
+          /usr/bin/lipo "$helper" -verify_arch arm64
+          archive_listing="$extract/archive.txt"
+          pyi-archive_viewer -r "$helper" > "$archive_listing"
+          grep -q 'kaon_repair' "$archive_listing"
+          grep -q 'steammetadataeditor/src/appinfo.py' "$archive_listing"
+          grep -q 'resources/launch_crossover.sh' "$archive_listing"
+          grep -q 'resources/launch_with_log.sh' "$archive_listing"
+          mkdir "$extract/home"
+          env -i HOME="$extract/home" PATH=/nonexistent TMPDIR="$extract" \
+            "$helper" --help | grep -q 'usage:'
+          (cd dist && shasum -a 256 -c SHA256SUMS)
+
+      - name: Upload development artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: kaon-macos-apple-silicon-${{ github.sha }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7

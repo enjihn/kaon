@@ -9,7 +9,14 @@ project.xcworkspace/
 
 # build products
 build/
+.build/
+dist/
+*.spec
 *.[oa]
+
+# Python caches
+__pycache__/
+*.py[cod]
 
 # Other source repository archive directories (protects when importing)
 .hg
@@ -24,4 +31,3 @@ CVS
 Backup[ ]of[ ]*.pages/
 Backup[ ]of[ ]*.key/
 Backup[ ]of[ ]*.numbers/
-

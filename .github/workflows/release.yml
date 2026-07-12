@@ -1,0 +1,246 @@
+name: macOS Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version placed in artifact names and app metadata
+        required: true
+        default: 0.1.0-dev
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Resolve release version
+        id: version
+        shell: bash
+        env:
+          MANUAL_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            version="$MANUAL_VERSION"
+          else
+            version="${GITHUB_REF_NAME#v}"
+          fi
+          [[ "$version" =~ ^[0-9A-Za-z][0-9A-Za-z._+-]*$ ]] || {
+            echo "Invalid release version: $version" >&2
+            exit 1
+          }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build (Apple Silicon)
+    needs: prepare
+    runs-on: macos-15
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.13'
+          architecture: arm64
+
+      - name: Install pinned packager
+        run: python -m pip install --disable-pip-version-check 'pyinstaller==6.21.0'
+
+      - name: Run Python tests
+        run: python -m unittest discover -s macos/tests -p 'test_*.py' -v
+
+      - name: Run Swift tests
+        run: swift test --package-path macos/installer
+
+      - name: Import optional Developer ID certificate
+        shell: bash
+        env:
+          CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+        run: |
+          set -euo pipefail
+          umask 077
+          if [[ -z "$CERTIFICATE_P12" ]]; then
+            [[ -z "$CERTIFICATE_PASSWORD" && -z "$SIGNING_IDENTITY" ]] || {
+              echo "macOS signing secrets are incomplete" >&2
+              exit 1
+            }
+            if [[ "$GITHUB_EVENT_NAME" == "push" && "$GITHUB_REF" == refs/tags/* ]]; then
+              echo "Tagged public releases require a Developer ID Application certificate." >&2
+              exit 1
+            fi
+            echo "KAON_SIGN_IDENTITY=-" >> "$GITHUB_ENV"
+            echo "Developer ID certificate not configured; producing a manual ad-hoc test build."
+            exit 0
+          fi
+
+          [[ -n "$CERTIFICATE_PASSWORD" ]] || {
+            echo "MACOS_CERTIFICATE_PASSWORD is required with MACOS_CERTIFICATE_P12" >&2
+            exit 1
+          }
+
+          certificate="$RUNNER_TEMP/kaon-developer-id.p12"
+          keychain="$RUNNER_TEMP/kaon-signing.keychain-db"
+          keychain_password="$(uuidgen)"
+          echo "KAON_KEYCHAIN_PATH=$keychain" >> "$GITHUB_ENV"
+          printf '%s' "$CERTIFICATE_P12" | /usr/bin/base64 -D > "$certificate"
+
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$certificate" \
+            -k "$keychain" \
+            -P "$CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign \
+            -T /usr/bin/security
+          security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: \
+            -s \
+            -k "$keychain_password" \
+            "$keychain"
+          security list-keychains -d user -s "$keychain"
+
+          if [[ -z "$SIGNING_IDENTITY" ]]; then
+            SIGNING_IDENTITY="$(security find-identity -v -p codesigning "$keychain" \
+              | sed -n 's/.*"\(Developer ID Application:[^"]*\)".*/\1/p' \
+              | head -n 1)"
+          fi
+          [[ -n "$SIGNING_IDENTITY" ]] || {
+            echo "No Developer ID Application identity was found in the certificate" >&2
+            exit 1
+          }
+
+          rm -f "$certificate"
+          echo "KAON_SIGN_IDENTITY=$SIGNING_IDENTITY" >> "$GITHUB_ENV"
+
+      - name: Build release artifacts
+        env:
+          KAON_PYTHON: python
+          KAON_NOTARY_APPLE_ID: ${{ secrets.APPLE_ID }}
+          KAON_NOTARY_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          KAON_NOTARY_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == "push" && "$GITHUB_REF" == refs/tags/* ]]; then
+            [[ -n "$KAON_NOTARY_APPLE_ID" && -n "$KAON_NOTARY_TEAM_ID" && -n "$KAON_NOTARY_PASSWORD" ]] || {
+              echo "Tagged public releases require complete Apple notarization credentials." >&2
+              exit 1
+            }
+          fi
+          macos/scripts/build-release.sh \
+            --version "${{ needs.prepare.outputs.version }}" \
+            --output dist \
+            --sign-identity "$KAON_SIGN_IDENTITY"
+
+      - name: Verify release payload and runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd dist && shasum -a 256 -c SHA256SUMS)
+          zip_path="$(find dist -maxdepth 1 -type f -name 'Kaon-Setup-*.zip' -print -quit)"
+          [[ -n "$zip_path" ]]
+          listing="$(mktemp)"
+          unzip -Z1 "$zip_path" > "$listing"
+          if grep -Eiq '(^|/)(lsteamclient|Steam\.app|CrossOver( Preview)?\.app)(/|$)|\.(exe|dll|so|dylib|a)(/|$)|\.framework(/|$)' "$listing"; then
+            echo "Forbidden content found in release artifact" >&2
+            exit 1
+          fi
+
+          extract="$(mktemp -d)"
+          /usr/bin/ditto -x -k "$zip_path" "$extract"
+          helper="$extract/Kaon Setup.app/Contents/Resources/Kaon/bin/kaon-setup"
+          /usr/bin/lipo "$helper" -verify_arch arm64
+          archive_listing="$extract/archive.txt"
+          pyi-archive_viewer -r "$helper" > "$archive_listing"
+          grep -q 'kaon_repair' "$archive_listing"
+          grep -q 'steammetadataeditor/src/appinfo.py' "$archive_listing"
+          grep -q 'resources/launch_crossover.sh' "$archive_listing"
+          grep -q 'resources/launch_with_log.sh' "$archive_listing"
+          mkdir "$extract/home"
+          env -i HOME="$extract/home" PATH=/nonexistent TMPDIR="$extract" \
+            "$helper" --help | grep -q 'usage:'
+
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: kaon-macos-apple-silicon-${{ needs.prepare.outputs.version }}
+          path: dist/
+          if-no-files-found: error
+
+      - name: Remove temporary signing keychain
+        if: always()
+        shell: bash
+        run: |
+          rm -f "$RUNNER_TEMP/kaon-developer-id.p12"
+          if [[ -n "${KAON_KEYCHAIN_PATH:-}" && -e "$KAON_KEYCHAIN_PATH" ]]; then
+            security delete-keychain "$KAON_KEYCHAIN_PATH"
+          fi
+
+  publish:
+    name: Publish GitHub release
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    needs:
+      - prepare
+      - build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download Apple Silicon artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: kaon-macos-apple-silicon-${{ needs.prepare.outputs.version }}
+          path: dist
+
+      - name: Verify checksums and signing status
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f dist/SHA256SUMS
+          test -f dist/SIGNING-STATUS.txt
+          test "$(grep -c 'Developer ID signed and Apple-notarized' dist/SIGNING-STATUS.txt)" -eq 1
+          (cd dist && sha256sum -c SHA256SUMS)
+          {
+            echo '## macOS installer signing status'
+            echo
+            sed 's/^/- /' dist/SIGNING-STATUS.txt
+            echo
+            echo 'Kaon supports Apple Silicon Macs. Download the `.dmg` and verify it with the published `SHA256SUMS` file if desired.'
+            echo
+            echo 'The public app and disk image are Developer ID signed and Apple-notarized.'
+          } > dist/RELEASE_NOTES.md
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" --clobber \
+              dist/Kaon-Setup-* dist/SHA256SUMS dist/SIGNING-STATUS.txt
+            gh release edit "$GITHUB_REF_NAME" --notes-file dist/RELEASE_NOTES.md
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              dist/Kaon-Setup-* dist/SHA256SUMS dist/SIGNING-STATUS.txt \
+              --title "Kaon $RELEASE_VERSION" \
+              --notes-file dist/RELEASE_NOTES.md
+          fi
