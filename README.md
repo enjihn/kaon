@@ -1,230 +1,342 @@
-# Introduction
+# Kaon for macOS — automated Steam + CrossOver setup
 
-Kaon is an preliminary set of configurations, tools, and instructions for use with the macOS Steam client which allows Windows games to be _more easily_ installed and run (via CrossOver or Wine) while still making as much as possible use of the the native macOS Steam client. It's vaguely reminiscent of the Linux Steam client's Steam Play & Proton integration, but with a large number of hacky rough edges.
+[![macOS CI](https://github.com/enjihn/kaon/actions/workflows/ci.yml/badge.svg)](https://github.com/enjihn/kaon/actions/workflows/ci.yml)
 
-#### TL;DR
- * Have a working macOS Steam client installation, and a working CrossOver installation with the Windows Steam client installed in its own bottle (e.g. a Bottle name "Steam", referred to as \<wine-bottle\> in these instructions). Both installations should be on the same volume of your Mac.
- * Configure the macOS Steam client to think its user interface and Install/Play logic are on Windows by putting the line `@sSteamCmdForcePlatformType windows` into a new file named `~/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/MacOS/steam_dev.cfg`
- * Connect the Windows Steam client's default library to the macOS Steam client as a shared library. This takes a few steps to convince the macOS Steam client since it works hard to prevent two libraries from existing on the same volume -- detailed instructions below.
- * Copy the `scripts` directory of this project into your shared library (for example to `~/Library/Application Support/CrossOver/Bottles/<wine-bottle>/drive_c/Program Files (x86)/Steam/steamapps/common/Kaon`).
- * Install pyton3.11 and its dependencies and use the modified `steammetadataeditor` tool in this project to create additional Windows launch options for your games, adding a new Windows launch menu options to launch them through `../Kaon/launch_with_log.sh <wine-bottle> <executable>` for debugging launching issues, or through `../Kaon/launch_crossover.sh <wine-bottle> <executable>` once all is well.
- * When you press the Play button in the macOS client and choose the new launch option, the game will launch through the script into the specified CrossOver bottle, and the game will launch the Windows + CrossOver Steam client (if it's not already running) and communicate with it for SteamWorks (friends, achievements) and game ownership validation. Both the Windows Steam client and the macOS Steam client will show the game as running and allow hard-stopping the game.
+Kaon lets the native macOS Steam client install, update, and launch Windows
+Steam games through an existing CrossOver installation. This fork turns the
+original proof of concept into a guided macOS app with repair, background
+startup, rollback, and uninstall support.
 
- > **NOTE**: if the Windows + CrossOver Steam client is not already running, the macOS Steam client may time-out waiting for the game to launch and not show (x Cancel) UI as it will have lost track of the parent script's PID - just be patient or pre-launch the Windows + CrossOver Steam client.
- 
- > **Also**, yes, it's a little annoying to have both the macOS and the Windows + CrossOver Steam clients visible and running. Once (if?) a functioning macOS-aware Wine `lsteamclient.dll` based on Proton's Linux `lsteamclient` is built (and this project includes the `Proton_9.0/lsteamclient` project as a subtree here to facilitate investigations and contributions), it should be possible to install it as a SteamWorks client API bridge within CrossOver to prevent the Windows Steam client from needing to be launched, visible, or even (possibly) installed. It should also be possible to avoid the shared library step for the macOS Steam client (TBD) although likely a bridge between CrossOver's environment and the macOS file-system of some sort will be needed to make path recognition work properly, and the Windows + CrossOver client may be required to resolve and update game SDK dependencies (DirectX, MSVC runtime, etc). It's not currently clear if the Steam Game Overlay, video recording, and other dynamic-library-injected features could currently work on macOS through `lsteamclient`'s current mechanisms or if there is specific logic baked into the Linux Steam client for Steam Play which facilitates this in a different way -- in SteamOS and Proton there is a whole different screen composition and input redirection layering that likely obviates the standard dynamic library injection that the Windows and macOS Steam clients use to interpose the graphic overlay and to interpose input management.
+> **Fork notice**
+>
+> This is an independent fork of [natbro/kaon](https://github.com/natbro/kaon).
+> Nathaniel Brothman created the original research, configuration, launch
+> scripts, and documentation that proved this approach could work. The native
+> installer and automation in this fork are maintained separately and are not
+> endorsed or supported by the upstream author.
 
-## Background
+## Quick start
 
-[Steam Play](https://steamcommunity.com/games/221410/announcements/detail/1696055855739350561) integrates compatibility tools, and specifically Proton as a Windows-to-Linux and DirectX-to-Vlukan compatibility tool into the purchase, download, configuration, update, and launch options of the Linux Steam client's user interface - [see this community guide for details and screenshots to get a sense of the UI integration](https://steamcommunity.com/shdaredfiles/filedetails/?id=1974055703). SteamOS further integrates Steam Play when running on dedicated Steam Deck hardware. SteamOS on Steam Deck does not offer the ability to turn Steam Play off completely and appears to have more automatic per-game compatibility choices driven by developer configuration and Steam Deck verification metadata provided by developers and publishers.
+You need:
 
-[Proton](https://github.com/ValveSoftware/Proton]) is the default compatibility tool of Steam Play and SteamOS running on Linux and on the Steam Deck. It creates a containerized runtime and API translation layer for games to isolate them from the host Linux version and from the rest of the Linux Steam client's installation. Proton uses a customized Wine to translate Windows-API-based 32-bit/i386 and 64-bit/x86_64 executables utilizing OpenGL-, DirectX-, and Vulkan-based graphics APIs into Linux and Vulkan APIs on the host i386+x86_64 platform. Although you will find throughout Proton's open source projects vestigial references to macOS and `__APPLE__`, Valve ceased maintaining Proton and Steam Play integration on macOS soon after Proton's beta release, before Apple Silicon. The project's transition to containerized building with a fixed Steam Runtime has made the majority of the configuration and building of Proton's source unworkable on macOS. That is to say - you can't just build the Proton project for macOS.
+- macOS 13 or newer on Apple Silicon or Intel;
+- the native [Steam for macOS](https://store.steampowered.com/about/) client,
+  launched at least once;
+- CrossOver or CrossOver Preview already installed; and
+- Windows Steam installed inside a CrossOver bottle, normally named `Steam`.
 
-When Steam Play is enabled in a client (currently Linux standalone and SteamOS/SteamDeck builds only), it forces the automatic installation of the [SteamPlay 2.0 Manifests](https://steamdb.info/app/891390/info/). This compatibility tool manifest ([see documentation here](https://gitlab.steamos.cloud/steamrt/steam-runtime-tools/-/blob/main/docs/steam-compat-tool-interface.md)) describes each of the installable versions of Proton (proton_experimental, Proton 9.0-4, Proton 8.0-5, etc), each of their dependent runtimes, and custom default configurations and settings for specifically tested applications (see the `app_mappings` section).
+Then:
 
-Steam Play enablement appears to change the visibility of the Install and Play user interface in the Linux Steam client's library, as well as the background updating processes of the Steam client. It enables installation of Windows-based game whenever there is a compatibility tool with `linux` in the `to_oslist` of the tool's manifest - and it changes the Play behavior to wrap the developer/publisher's Windows launch options (the executable, working directory, and launch options) to support redirection through matching compatibility tool.
+1. Download the correct Mac build from
+   [Releases](https://github.com/enjihn/kaon/releases).
+2. Open **Kaon Setup.app**.
+3. Choose **CrossOver**, **CrossOver Preview**, or a custom CrossOver app.
+4. Select the bottle containing Windows Steam.
+5. Review the optional background and interface-hiding choices, then click
+   **Install Kaon**.
+6. Reopen native Steam. Windows games can now be installed from its normal
+   Library interface. **In Steam's install dialog, choose the library labeled
+   `Shared CrossOver … Library`**, not the native default library.
+7. Choose the Kaon launch option when starting a game. Every future Windows
+   game installed into that shared library is discovered automatically; you do
+   not need to ask Codex or edit each game by hand.
 
-In the current macOS Steam client, although it is possible to install and register a compatibility tool with `"to_oslist" "macos"` in its configuration by placing a `compatibiltytool.vdf` manifest such as this example:
+Kaon is currently beta software. Until a release is Developer-ID signed and
+notarized, macOS may require you to Control-click the app, choose **Open**, and
+confirm once. The release page states whether a build is notarized.
+
+## What Kaon changes
+
+Kaon performs the same core integration as upstream, but automatically and
+with verified backups:
+
+1. It adds `@sSteamCmdForcePlatformType windows` to native Steam's
+   `steam_dev.cfg`. Native Steam then shows Windows Install and Play controls.
+2. It registers the Windows Steam folder inside the selected CrossOver bottle
+   as a shared native Steam library. Windows games must be installed into this
+   labeled shared library so both Steam clients see the same files.
+3. It installs small launch scripts into that shared library.
+4. It adds one clearly labeled Kaon launch option to every installed game in
+   the shared library.
+5. If enabled, a per-user background agent safely restores those managed
+   changes after Steam updates its local metadata.
+6. If enabled, another per-user agent starts Windows Steam silently at login.
+
+The native and Windows Steam clients refer to the same game files; Kaon does
+not duplicate the games. Windows Steam still needs to run for ownership checks,
+Steamworks, friends, achievements, and games that require the Steam client.
+
+### Important Steam tradeoff
+
+The platform override applies to the **whole native Steam client**. Games with
+both Mac and Windows depots will be treated as Windows games while it is
+enabled. Kaon is best used when native Steam is serving primarily as the UI for
+the CrossOver Windows library. Read [Limitations and safety](#limitations-and-safety)
+before using a mixed Mac/Windows game library.
+
+The upstream research also found that the presence of `steam_dev.cfg` can make
+native Steam skip its initial bootstrap updater. Most client updates still
+arrive normally, but if Steam appears stuck on an old client build, use the
+careful maintenance procedure below rather than deleting the file while Steam
+is open.
+
+### Temporarily allow a native Steam bootstrap update
+
+This is an advanced recovery procedure because starting without the Windows
+override can make native Steam reconsider installed depots.
+
+1. Quit both Steam clients and every game.
+2. Disable Kaon's repair agent with
+   `~/Library/Application\ Support/Kaon/bin/kaon-setup repair --no-auto-repair --yes`.
+3. Move—not delete—`steam_dev.cfg` out of
+   `~/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/MacOS/`.
+4. Start native Steam, allow its client bootstrap to finish, then quit Steam
+   again before installing, updating, or launching a game.
+5. Put `steam_dev.cfg` back and run
+   `~/Library/Application\ Support/Kaon/bin/kaon-setup repair --auto-repair --yes`
+   before reopening Steam.
+
+Kaon's backups remain available, but this procedure cannot prevent Steam from
+changing depots while it is temporarily in macOS mode. Avoid it unless the
+client updater is genuinely stuck.
+
+## Installer choices
+
+| Choice | What it does |
+| --- | --- |
+| **CrossOver** | Uses a normal `CrossOver.app` installation. |
+| **CrossOver Preview** | Uses `CrossOver Preview.app`; the exact selected path is saved, so stable and Preview can coexist. |
+| **Custom** | Uses a renamed or nonstandard CrossOver app you select. |
+| **Automatic repair** | Watches Steam metadata at low frequency and restores only Kaon-owned entries after native Steam is closed. Enabled by default. |
+| **Start Windows Steam at login** | Launches the selected bottle's Steam directly and silently once after login. It does not continuously relaunch Steam if you deliberately quit it. |
+| **Hide CrossOver from the background Dock** | Uses the direct background launcher and optionally removes the selected CrossOver app's pinned Dock tile. A tile removed by Kaon is recorded and can be restored. CrossOver appears normally when you open it yourself. |
+| **Hide Windows tray icons** | Experimental. Hides every Windows tray icon in the selected bottle, not only Steam. Off by default. |
+
+## Optional Dock and menu-bar hiding
+
+The two hiding options are independent.
+
+Background Dock hiding launches Wine directly instead of using CrossOver's
+generated foreground app wrapper. If the selected CrossOver edition is pinned,
+Kaon can remove that exact path from the Dock without changing other tiles. It
+never changes CrossOver's `Info.plist`, and manually opening CrossOver still
+shows it normally.
+
+Windows tray hiding is necessarily more advanced. CrossOver's Explorer process
+bridges Windows tray icons into the macOS menu bar. Kaon:
+
+- reads Explorer from the user's own licensed CrossOver installation;
+- validates one known stable or Preview instruction pattern;
+- derives a six-byte bottle-local patch;
+- installs it only into the selected bottle; and
+- records hashes so it can repair or roll back only its own changes.
+
+Kaon never modifies or redistributes `CrossOver.app`. An unknown CrossOver
+update fails safely: games remain usable, the menu-bar icon may return, and
+Kaon reports that tray hiding is degraded instead of guessing at a patch.
+
+## Maintenance
+
+Open **Kaon Setup.app → Maintenance** at any time to:
+
+- check the selected app, bottle, Steam library link, launch options, and
+  background agents;
+- repair the complete managed configuration;
+- start or stop the selected bottle's Windows Steam; or
+- uninstall the active Kaon integration.
+
+Native Steam must be completely quit before install, repair, or uninstall.
+Kaon intentionally defers rather than rewriting Steam's binary metadata while
+Steam or Steam Metadata Editor is using it.
+
+Uninstall removes Kaon's agents and exact owned launch entries, restores a
+Kaon-patched bottle Explorer, and restores a Dock tile that Kaon removed. It
+preserves game files, the shared-library data, content-addressed backups, and
+recovery support by default so uninstall cannot erase a game library.
+
+## Command line
+
+The native app calls the same auditable setup engine exposed by the source
+tree:
+
+```zsh
+# Preview the detected installation and current health
+macos/bin/kaon-setup status --json
+
+# Install with CrossOver Preview and the default Steam bottle
+macos/bin/kaon-setup install \
+  --crossover-edition preview \
+  --bottle Steam \
+  --auto-repair \
+  --start-at-login
+
+# Opt into both interface-hiding features
+macos/bin/kaon-setup repair --hide-dock --hide-tray --yes
+
+# Repair, start/stop the Windows client, or uninstall
+macos/bin/kaon-setup repair --yes
+macos/bin/kaon-setup start-steam
+macos/bin/kaon-setup stop-steam
+macos/bin/kaon-setup uninstall --yes
 ```
-"compatibilitytools"
-{
-  "compat_tools"
-  {
-	"crossover"
-	{
-	  "install_path" "."
-	  "display_name" "CrossOver Compatibility Tool"
-	  "from_oslist" "windows"
-	  "to_oslist" "macos"
-	}
-  }
-}
-```
-into your `~/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/MacOS/compatibilitytool.d/<tool-directory>/` directory, the additional Steam Play user-interface enablement and launch-redirection logic is not functioning, so compatibility tools on macOS are effectively ignored from a user experience perspective.
 
-[CrossOver](https://www.codeweavers.com/crossover) is a macOS application built by CodeWeavers, the primary maintainers of Wine, which bundles a customized version of Wine for macOS. The application provides a launching and configuration UI for Wine as well as an application installation and configuration database for running applications within Wine "bottles" (distinct Windows translation "soft" containers). Although mainline Wine has incorporated many macOS-specific changes over the years, an important handful of macOS- and CrossOver-specific changes to support the macOS environment and the 32-bit i386 and 64-bit x86_64 translation on Intel and Apple Silicon Macs are kept in [a distinct patch-set](https://www.codeweavers.com/crossover/source), likely because they are so specialized to macOS they muddle the cross-platform nature of the overall code-base. Since important macOS and Apple Silicon changes are not part of main-line Wine, they are also not part of Proton's Wine, which is anothre reason Proton can't "just be built for macOS."
+Running from source requires Python 3. The downloadable app contains its own
+setup runtime and does not require Homebrew, Python, Xcode, or administrator
+access.
 
-The CrossOver application additionally includes closed-source / proprietary configuration and support tools and a graphical user interface which simplifies using Wine for non-technical users. This is quite similar to how Steam Play integration in the Linux Steam client integrates closed-source UI and configuration meta-data.
+## Files installed in your account
 
-## 1. Installing Windows games naturally
-TL;DR Configure the macOS Steam client to think its user interface and Install/Play logic should reflect Windows as the host/client by putting `@sSteamCmdForcePlatformType windows` into `~/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/MacOS/steam_dev.cfg` and restarting Steam.
+Kaon is a user-level installation and does not use `sudo`.
 
-Now Steam will configure it's UI to offer the Install button for any Windows games you own which are listed in your Library and it will also enable the Play button. It will download and install only the Windows versions and keep them up-to-date. Any game you own with ONLY a macOS version on offer (only a macOS depot in the Steam back-end) will remain installed, though will not stay updated when the Steam client believes it is "Windows". Any game with both a macOS and a Windows version available on Steam will eventually be updated or cleared to install just the Windows version with this configuration unless you turn off updating the game until launch (and even then, it will update to the Windows version upon next launch). Part of Steam Play's logic in the Linux Steam client, which does not appear to be implemented in the macOS Steam client, is the ability to prefer the platform-native version of a game unless overridden - the brute force of setting the platform type via the `@sSteamCmdForcePlatformType` ConVar is not as nuanced as full Steam Play logic, and simply causes everything to go through the Windows install, update, and play paths.
+```text
+~/Library/Application Support/Kaon/
+  bin/kaon-setup                 installed maintenance engine
+  config.json                    selected CrossOver app, bottle, and options
+  state/                         ownership and rollback records
+  backups/                       content-addressed safety copies
 
-### 1.1 Details
-The documentation for the SteamCmd tool shows how you can [download non-macOS versions of games onto your Mac](https://developer.valvesoftware.com/wiki/SteamCMD#Cross-Platform_Installation) by setting the `@sSteamCmdForcePlatformType` ConVar to `windows`.
-You can even do this without SteamCmd from the client console. Launch the macOS Steam client with a `-console` command-line argument, from a terminal:
-```
-open /Applications/Steam.app --args -console
-```
-or if Steam is already running, issue the following from a terminal:
-```
-open steam://nav/console
-```
-In the Steam client's terminal, you can now manually install the Windows versions of games you own, for example to install BioShock 7670:
-```
-@sSteamCmdForcePlatformType windows
-app_install 7670
-```
-Alas, though - there is instability to this Windows configuration when established after launch and without full Steam Play logic built in. First off, if a game has a native/macOS depot of any kind, even an empty one (and BioShock 7670 is just such a game), the next time the Steam client is run and before you get a chance to set `@sSteamCmdForcePlatformType windows` you may find the background updating process has emptied or "reaped" the installation folder or replaced it with the macOS version.
+~/Library/LaunchAgents/
+  io.github.enjihn.kaon.autoheal.plist
+  io.github.enjihn.kaon.crossover-steam.plist
+  io.github.enjihn.kaon.crossover-tray-guard.plist   # only when enabled
 
-Additionally, you do not have the ability to install other games through the normal library installation UI - that UI was configured for platform type at launch, before the platform override ConVar was set by you in the console - you are stuck doing manual `app_update` installs from SteamCmd or from the console.
-
-In a first attempt to get the ConVar at initial launch, I thought you might be able to use:
-```
-open /Applications/Steam.app --args -console "+@sSteamCmdForcePlatformType windows"
-```
-(be sure to quote correctly), and while looking at ConVars in the console appears to show it being set correctly at launch, the Library UI still does not show the ability to Install Windows games - the platform setting must be getting read for the Library's UI earlier than the command-line ConVars are parsed?
-
-Fear not - we can get around this by creating the `steam_dev.cfg` file noted in TL;DR above.
-
-> Note that putting this ConVar in the alternate `steam.cfg` file in your installation will not work - `@sSteamCmdForcePlatformType` is not an allowed ConVar in `steam.cfg` and will be ignored - it only works if placed in `steam_dev.cfg`. The downside to putting this setting in `steam_dev.cfg` can be that the presence of this file typically prevents on macOS the "initial bootstrap" step of the macOS Steam client (it triggers the command-line argument `-skipinitialbootstrap` which updates the Steam client). You may want to occasionally force a client update by removing this file for a single launch of Steam and then restoring it before the client gets a chance to "reap" all your Windows games installations away while running in macOS Steam client mode.
-
-## 2. Connect macOS and CrossOver Steam Libraries
-For now, this strange step is the most straightforward way to align the paths between the macOS Steam client and the Windows + CrossOver Steam client so games can communicate with the Windows + CrossOver Steam client for SteamWorks and ownership validation without per-game path reconciliation parameters passed to the wrapping scripts.
-
-The end-goal you are after is to have a secondary non-default library for your macOS Steam client where you install Windows games which matches your Windows + CrossOver Steam client's default library - you're looking to eventually have your macOS Steam client's `~/Library/Application Support/Steam/steamapps/libraryfolders.vdf` file  look something like the following:
-
-```
-"libraryfolders"
-{
-		"0"
-		{
-				"path"          "/Users/<user-name>/Library/Application Support/Steam"
-				"label"         "Default Library"
-				...
-		}
-		"1"
-		{
-				"path"          "/Users/<user-name>/Library/Application Support/CrossOver/Bottles/<wine-bottle>/drive_c/Program Files (x86)/Steam"
-				"label"         "Shared Library"
-				...
-		}
-}
-```
-while your Windows + CrossOver's library at `~/Library/Application Support/CrossOver/<wine-bottle>/drive_c/Program Files (x86)/Steam/steamapps/libraryfolders.vdf` continues to look like the following
-```
-"libraryfolders"
-{
-		"0"
-		{
-				"path"          "C:\\Program Files (x86)\\Steam"
-				"label"         "Default Library"
-				...
-		}
-}
-```
-To get to this state you need to take a series of intermediary steps:
-* From the terminal, create and mount a temporary growable disk image. You're going to use this additional mounted "volume" to trick the macOS Steam client into allowing you to create an additional library that it thinks is on a secondary volume, and then you're going to edit its configuration to point to your Windows + CrossOver Steam client default library. To do this, from a terminal do the following:
-```
-cd ~/Desktop
-hdiutil create -size 1gb -type SPARSE -fs apfs -volname Steam-Windows steam.dummy
-hdiutil mount steam.dummy.sparseimage
-```
-* Launch your macOS Steam client and go to Steam > Preferences... and choose Storage. In Storage, in the Library drop-down list, choose `(+) Add Drive` option, and choose the `/Volumes/Steam-Windows` drive that is showing (it may be part of a list if you have additional volumes mounted).
-* Now shut down the macOS Steam client and use a text editor to open the `~/Library/Application Support/Steam/steamapps/libraryfolders.vdf` file. Change the line that says
-```
-	"path"          "/Volumes/Steam-Windows/SteamLibrary"
-```
-to the path to your Windows + CrossOver Steam client's library folder, e.g.
-```
-	"path"			"/Users/<user-name>/Library/Application Support/CrossOver/Bottles/<wine-bottle>/drive_c/Program Files (x86)/Steam"
-```
-* Reboot the macOS Steam client and once again go to Steam > Preferences... and choose Storage to confirm the connection to this library. It might be useful for your sanity to use the Library rename function (hiding in the `...` menu when you have a library selected) to name your Windows + CrossOver library something like "Shared Library" and your normal Steam library "Default Library", as shown here:
-
-![Give your macOS Steam client's default library and shared library names so you aren't confused in the future](resources/steam_shared_library.png)
-
-* You can now unmount and delete the temporary sparse disk image / volume you created to trick the macOS Steam client:
-```
-cd ~/Desktop
-hdiutil unmount /Volumes/Steam-Windows
-rm steam.dummy.sparseimage
+~/Library/Logs/Kaon/             bounded or low-volume diagnostic logs
 ```
 
-> Note: it doesn't appear that you can skip the dummy volume step by just manually adding this entry to your `libraryfolders.vdf` file - the Steam client does a little bit of validation or checksumming (?) of some kind when setting up a new library and seems to wipe out additional library entries in `libraryfolders.vdf` which it didn't initially make itself. Happy to be proven wrong here, this step is annoying.
+The game launchers live at
+`<CrossOver Steam>/steamapps/common/Kaon/`. Logs never dump the user's full
+environment or authentication data.
 
-## 3. Functioning Play Buttons
-Since Step 1 you already have the Play button available in your Library for installed Windows games, but it's not doing what you want because it's trying to launch the Windows executable from one of the developer-provided launch options in the application's metadata/manifest/configuration. But because of Step 2 you have aligned the paths which the macOS Steam client thinks of as truth and the paths which the Windows + CrossOver Steam client thinks of as truth, so you're ready to get things wired up.
+## Automatic repair and data safety
 
-Your first step is to copy the `scripts` directory of this project into a new folder in your your shared library
+Steam periodically replaces `appcache/appinfo.vdf`, which can remove local
+launch options. Kaon's repair engine is conservative:
+
+- it uses a per-user lock and waits for native Steam and the metadata editor to
+  close;
+- it confirms the source file is stable before working;
+- it stages changes beside the original, reparses the result, and verifies app
+  counts and every non-Kaon section;
+- it backs up by content hash and installs with an atomic rename; and
+- it owns only the exact launch entries recorded in Kaon's state. A user-edited
+  or diverged entry is reported and left untouched during uninstall.
+
+The agent combines file watching with a 60-second fallback. It does no work
+when signatures have not changed and never modifies metadata while Steam is
+active.
+
+## Troubleshooting
+
+### “Steam must be running”
+
+The game is talking to Windows Steam, not only native Steam. In Kaon Setup,
+open **Maintenance** and choose **Start Windows Steam**, or enable startup at
+login. You can still launch Windows Steam normally through CrossOver when you
+want its full UI.
+
+### A game says “OS Error 0” or its Kaon option disappeared
+
+Quit native Steam, open **Maintenance**, and choose **Repair Kaon**. Automatic
+repair normally handles this after Steam closes; the status result will explain
+if it was deferred or encountered an unknown metadata version.
+
+### A newly installed game has no Kaon launch option
+
+Confirm that you selected `Shared CrossOver … Library` in Steam's install
+dialog. Games placed in native Steam's default library are intentionally not
+managed because Windows Steam cannot see those files. If the game is already
+in the shared library, quit native Steam and run Repair; Kaon discovers it from
+its `appmanifest_*.acf` file automatically.
+
+### CrossOver Preview was selected but stable CrossOver starts
+
+Open Setup and confirm the displayed application path. Stable and Preview can
+share a bundle identifier, so Kaon saves and launches the exact `.app` path
+rather than selecting by bundle identifier.
+
+### The menu-bar icon returned after a CrossOver update
+
+Run Repair. If the updated Explorer pattern is unknown, Kaon intentionally
+leaves the vendor copy unmodified and reports degraded tray hiding. Do not copy
+an Explorer binary from a different CrossOver version.
+
+### Logs and status
+
+```zsh
+~/Library/Application\ Support/Kaon/bin/kaon-setup status --json
+open ~/Library/Logs/Kaon
 ```
-mkdir "~/Library/Application Support/CrossOver/Bottles/<wine-bottle>/drive_c/Program Files (x86)/Steam/steamapps/common/Kaon"
-cp scripts/* "~/Library/Application Support/CrossOver/Bottles/<wine-bottle>/drive_c/Program Files (x86)/Steam/steamapps/common/Kaon"
+
+When reporting an issue, include the JSON status and relevant Kaon log lines,
+but do not upload your whole Steam or CrossOver bottle.
+
+## Limitations and safety
+
+- This remains an integration around undocumented Steam metadata behavior; a
+  Steam update can require a Kaon update.
+- CrossOver and CrossOver Preview compatibility must be tested per release.
+  Tray hiding supports only explicitly recognized Explorer patterns.
+- Native Steam's Windows override is global. Keep backups of important native
+  Mac installs and do not casually remove the override while Steam is running.
+- Some anti-cheat, kernel-driver, launcher, DRM, graphics, or architecture
+  requirements are incompatible with Wine/CrossOver regardless of Kaon.
+- Background-item notifications and controls are owned by macOS and cannot be
+  suppressed by Kaon.
+- A public ad-hoc-signed build triggers more Gatekeeper friction than a
+  notarized Developer ID build. Release notes identify the signing status.
+
+## Building and contributing
+
+The repository intentionally keeps the installer separate from the inherited
+research tree:
+
+```text
+macos/
+  installer/       SwiftUI native setup and maintenance app
+  engine/          setup orchestration and safe appinfo reconciliation
+  bin/             source-tree command-line entrypoint
+  resources/       installed game launchers
+  scripts/         release builder and policy audit
+  tests/           Python safety and format tests
+.github/workflows/ macOS CI and release packaging
+docs/              packaging and third-party licensing details
 ```
-This places the `launch_with_log.sh` and `launch_crossover.sh` scripts into a known location which is consistent to reference from other game directories in the shared library for the next step where you add additional launch options to games you want to wrap up.
- 
-Now use the modified `steammetadataeditor` tool in this project -- which is derived from the [Steam-Metadata-Editor](https://github.com/tralph3/Steam-Metadata-Editor) tool -- to add a new launch option for a game. Be sure to have Steam-Metadata-Editor dependencies installed:
+
+Run the local checks with:
+
+```zsh
+python3 -m unittest discover -s macos/tests -p 'test_*.py' -v
+swift test --package-path macos/installer
+zsh -n macos/bin/kaon-setup macos/resources/*.sh
 ```
-% brew install python@3.11 python-tk@3.11
-```
-Launch options are provided by game developers/publishers as part of the game's manifest in Steam's back end, and the manifests for ALL of your owned games are cached in the Steam client in the file `Steam/appcache/appinfo.vdf`. You can modify the cached manifest using `steammetadataeditor` and Steam will not overwrite your changes unless the manifest is updated by the developer/publisher. `steammetadataeditor` has a cool feature where it keeps a side-copy of just your changes and can re-apply them if the `appinfo.vdf` file is updated or deleted and recreated by Steam.
 
-So, launch `steammetadataeditor` and type the name of the game you want to modify, then press the "Edit Launch Menu" button. Use the "Add New Entry" button to add a new Windows launch-option for each game to bounce them through `../Kaon/launch_with_log.sh <wine-bottle> <executable>` for debugging launching issues, or through `../Kaon/launch_crossover.sh <wine-bottle> <executable>` once all is well. Because of the way Steam quotes the Executable name when spawning child processes, you need to add the `<wine-bottle> <executable>` portion of the launch through the launch arguments, so your updated launch options list will look something like this:
+Build a release with `macos/scripts/build-release.sh`. See
+[docs/PACKAGING.md](docs/PACKAGING.md) for signing, notarization, architecture,
+artifact policy, and release secrets.
 
-![Example of adding a new launch menu item for BioShock](resources/launch_options_example.png)
+## Licensing and redistribution
 
-Remember to use the Save button in the `steammetadataeditor` tool after you close the launch menu editor window! Rewriting this tool into a command-line script to automate these modifications so you could do `add_crossover_launch_option <wine-bottle> [<game-name> | <appid>]` instead of having to have python3.11 installed and run a GUI tool would be a great next step to simplify Kaon.
+The original Kaon work and this repository's general setup code retain the
+top-level [Apache License 2.0](LICENSE). The AppInfo codec inherited from
+Steam Metadata Editor, and Kaon's tightly coupled repair module, are distributed
+under GPLv3-or-later; see
+[third-party notices](docs/THIRD_PARTY_NOTICES.md) and
+[`steammetadataeditor/LICENSE`](steammetadataeditor/LICENSE).
 
-The `launch_with_log.sh` script will append to the `crossover_log.txt` log file in the Kaon directory. Looking at this log and at the macOS Steam client's `console_log.txt` and the Windows + CrossOver Steam clients `console_log.txt` file can help clear up launch and environment setup issues. CrossOver's Wine logs can be pretty handy, too!
- 
-### 3.1. Details
-Play buttons are enabled in the macOS Steam client in two cases:
-1. When `macos` is in the `oslist` list of supported platforms in a game's manifest and there is a valid macOS launch option, *or*
-2. When the `oslist` contains just `windows` and the Steam client has been launched with an early enough `@sSteamCmdForcePlatform windows` ConVar.
+Release artifacts are assembled from an explicit allowlist. They do **not**
+contain CrossOver, Steam, a bottle, Windows executables, or the inherited
+`lsteamclient`/Steamworks research tree. Users must obtain CrossOver and Steam
+from their respective vendors. The optional Explorer change is derived locally
+from the user's installation and is never shipped.
 
-The custom version of the `steammetadataeditor` included in this projects supports editing the `oslist` configuration data of an app for experimentation, but as noted above, having a Windows game installed when the background updating system is configured for macOS can cause it to delete the application _if_ there is are macOS depots available for the game. In the case of Bioshock/7670, for example, there is an empty macOS depot, and so its installation directory can get emptied out from under you. To see all of the configuration data for an application, from `steamcmd` or from the Steam client console, you can use `app_info_print <appid>`, for example:
+## Credits
 
-```
-] app_info_print 7670
-AppID : 7670, change number : 27372237/0, last change : Mon Feb 10 12:54:06 2025 
-"7670"
-{
-	"common"
-	{
-		"name"		"BioShock"
-		"oslist"	"windows"
-		...
-	}
-	...
-	"config"
-	{
-		"contenttype"		"3"
-		"installdir"		"Bioshock"
-		"launch"
-		{
-			"0"
-			{
-				"executable"		"Builds\\Release\\bioshock.exe"
-				"workingdir"		"Builds\\Release"
-				"config"
-				{
-					"oslist"		"windows"
-				}
-			}
-		}
-	}
-}
-``` 
+- [natbro/kaon](https://github.com/natbro/kaon) — original concept, research,
+  launcher integration, and detailed Steam/CrossOver documentation.
+- [tralph3/Steam-Metadata-Editor](https://github.com/tralph3/Steam-Metadata-Editor)
+  — AppInfo parsing and writing foundation used under GPLv3.
+- CodeWeavers, Valve, Wine, and the many translation-layer contributors whose
+  work makes Windows gaming on macOS possible.
 
-## Next steps
-
-1. Creating a macOS-aware version of Proton's `lsteamclient` is an obvious next step to (possibly) simplify this configuration and avoid two Steam clients running at once. Building `lsteamclient` requires macOS-aware Wine tools and some tweaks to the interconnect which are exacerbated by Rosetta 2 translation and slight differences in protobuf packing IIRC. Anybody looking to contribute here might find some of the background on game<->Steam communication I wrote in [this reddit thread](https://www.reddit.com/r/macgaming/comments/1ifyx55/steamplay_proton_on_macos_research) useful.
-
-2. Creating an easier-to-use / cmd-line version of the `steammetadataeditor` tool for tweaking `appcache.vdf` would simplify this configuration for casual users. Making it work with the current default `homebrew` python3.13 rather than needing to back up to python3.11 due to GUI dependencies would also simplify life.
-
-3. Given all the background above, I suspect there is a path where you could have native macOS games and Windows + CrossOver games intermingled in your macOS Steam client library with a little more manual work for installs and updates than most folks might like. Something like:
-   * Not booting the macOS Steam client in Windows mode (so removing the suggested `steam_dev.cfg` file)
-   * Turning off auto-update of specific games you want to run through CrossOver in the macOS Steam client
-   * Manually installing Windows games into the shared library from the console or SteamCmd using temporary `@sSteamCmdForcePlatform windows` just when you're installing/updating.
-   * These days you can tell Steam only to not update a game until you run it to prevent background reaping (you can't turn it off from the GUI entirely anymore), but... last I checked it seems to be possible to make specific apps not update by marking their `appmanifest_<appid>.acf` file in the library read-only, e.g. `chmod -w "~/Library/Application Support/Steam/steamappos/appmanifest_7670.acf"` YMMV. But you could also just be sure to set `@sSteamCmdForcePlatform windows` in the console before you launch these specific Windows + CrossOver games and allow the client to update them if they have Windows updates.
-   * Adding `macos` to the `oslist` of the Windows + CrossOver game's manifest in your macOS Steam client's `appinfo.vdf` and adding a macOS-specific launch option instead of an additional Windows launch option. This would give you a functioning Play button on macOS even though Install buttons would not work.
-
-## Acknowledgements
-
-Thanks to [scvairy on /r/macgaming](https://www.reddit.com/r/macgaming/comments/1ifyx55/steamplay_proton_on_macos_research) for bringing up this topic while I was between things. It reminded me to document more about how Steam, Proton, CrossOver, and Rosetta work with one another on macOS, as not a lot of people understand this whole tangle. It's cathartic to get this itch out of my brain, too.
-
-Thanks to CodeWeavers for continuing to invest in CrossOver for macOS and for all their hard work over the years integrating MoltenVK, GPTk/D3DMetal, and now DXMT into the graphic stack and into games. It has been a pleasure working alongside you all for 10+ years!
-
-Thanks to Bill Hollings, Baldur Karlsson, Dan Ginsburg, everybody at LunarG and many others in the community and at Valve for their ongoing work on MoltenVK and SPIRV-Cross to accelerate and broaden Vulkan and for supporting DirectX translation to Metal. What a long strange trip it continues to be.
-
-Thanks to my friends & former colleagues at Valve who keep macOS Steam chugging, MoltenVK going, for making Proton awesome, and to my friends & former colleagues at Apple working on GPTk/D3DMetal, Rosetta, game controllers and GameTech and gaming as a whole - thanks for keeping the very tenuous dream alive.
+For the upstream project's original manual guide and research discussion, see
+the [upstream README](https://github.com/natbro/kaon/blob/main/README.md).
