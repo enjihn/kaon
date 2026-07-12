@@ -165,7 +165,7 @@ jobs:
           extract="$(mktemp -d)"
           /usr/bin/ditto -x -k "$zip_path" "$extract"
           helper="$extract/Kaon Setup.app/Contents/Resources/Kaon/bin/kaon-setup"
-          /usr/bin/lipo -verify_arch arm64 "$helper"
+          /usr/bin/lipo "$helper" -verify_arch arm64
           archive_listing="$extract/archive.txt"
           pyi-archive_viewer -r "$helper" > "$archive_listing"
           grep -q 'kaon_repair' "$archive_listing"
