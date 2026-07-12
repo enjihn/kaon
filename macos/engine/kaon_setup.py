@@ -898,6 +898,8 @@ MARKER_OFFSET = 0x40
 
 def vendor_explorer(config: Mapping[str, Any]) -> Path:
     wine_root = Path(str(config["crossover_app"])) / "Contents/SharedSupport/CrossOver/lib/wine"
+    # This names CrossOver's Windows guest binary layout; it is unrelated to
+    # Kaon's Apple Silicon-only macOS host architecture.
     preferred = wine_root / "x86_64-windows/explorer.exe"
     if preferred.is_file() and not preferred.is_symlink():
         return preferred

@@ -14,18 +14,8 @@ concurrency:
 
 jobs:
   test:
-    name: Test (${{ matrix.arch }})
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: macos-15
-            arch: arm64
-            python_arch: arm64
-          - runner: macos-15-intel
-            arch: x86_64
-            python_arch: x64
+    name: Test (Apple Silicon)
+    runs-on: macos-15
 
     steps:
       - name: Check out source
@@ -35,7 +25,7 @@ jobs:
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.13'
-          architecture: ${{ matrix.python_arch }}
+          architecture: arm64
 
       - name: Validate scripts and property lists
         shell: bash
@@ -64,19 +54,9 @@ jobs:
         run: swift test --package-path macos/installer
 
   package:
-    name: Package (${{ matrix.arch }})
+    name: Package (Apple Silicon)
     needs: test
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: macos-15
-            arch: arm64
-            python_arch: arm64
-          - runner: macos-15-intel
-            arch: x86_64
-            python_arch: x64
+    runs-on: macos-15
 
     steps:
       - name: Check out source
@@ -88,24 +68,21 @@ jobs:
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.13'
-          architecture: ${{ matrix.python_arch }}
+          architecture: arm64
 
       - name: Install pinned packager
         run: python -m pip install --disable-pip-version-check 'pyinstaller==6.21.0'
 
       - name: Build app, ZIP, and DMG
         env:
-          KAON_ARCH: ${{ matrix.arch }}
           KAON_PYTHON: python
         run: macos/scripts/build-release.sh --version 0.0.0-ci --output dist
 
       - name: Audit release payload
         shell: bash
-        env:
-          KAON_ARCH: ${{ matrix.arch }}
         run: |
           set -euo pipefail
-          zip_path="$(find dist -maxdepth 1 -type f -name "*-${KAON_ARCH}.zip" -print -quit)"
+          zip_path="$(find dist -maxdepth 1 -type f -name 'Kaon-Setup-*.zip' -print -quit)"
           [[ -n "$zip_path" ]]
           listing="$(mktemp)"
           unzip -Z1 "$zip_path" > "$listing"
@@ -128,7 +105,7 @@ jobs:
           extract="$(mktemp -d)"
           /usr/bin/ditto -x -k "$zip_path" "$extract"
           helper="$extract/Kaon Setup.app/Contents/Resources/Kaon/bin/kaon-setup"
-          /usr/bin/lipo -verify_arch "$KAON_ARCH" "$helper"
+          /usr/bin/lipo -verify_arch arm64 "$helper"
           archive_listing="$extract/archive.txt"
           pyi-archive_viewer -r "$helper" > "$archive_listing"
           grep -q 'kaon_repair' "$archive_listing"
@@ -138,12 +115,12 @@ jobs:
           mkdir "$extract/home"
           env -i HOME="$extract/home" PATH=/nonexistent TMPDIR="$extract" \
             "$helper" --help | grep -q 'usage:'
-          (cd dist && shasum -a 256 -c "SHA256SUMS-$KAON_ARCH")
+          (cd dist && shasum -a 256 -c SHA256SUMS)
 
       - name: Upload development artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: kaon-macos-${{ matrix.arch }}-${{ github.sha }}
+          name: kaon-macos-apple-silicon-${{ github.sha }}
           path: dist/
           if-no-files-found: error
           retention-days: 7

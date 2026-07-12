@@ -43,19 +43,9 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
   build:
-    name: Build (${{ matrix.arch }})
+    name: Build (Apple Silicon)
     needs: prepare
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: macos-15
-            arch: arm64
-            python_arch: arm64
-          - runner: macos-15-intel
-            arch: x86_64
-            python_arch: x64
+    runs-on: macos-15
 
     steps:
       - name: Check out source
@@ -67,7 +57,7 @@ jobs:
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.13'
-          architecture: ${{ matrix.python_arch }}
+          architecture: arm64
 
       - name: Install pinned packager
         run: python -m pip install --disable-pip-version-check 'pyinstaller==6.21.0'
@@ -142,7 +132,6 @@ jobs:
 
       - name: Build release artifacts
         env:
-          KAON_ARCH: ${{ matrix.arch }}
           KAON_PYTHON: python
           KAON_NOTARY_APPLE_ID: ${{ secrets.APPLE_ID }}
           KAON_NOTARY_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
@@ -161,12 +150,10 @@ jobs:
 
       - name: Verify release payload and runtime
         shell: bash
-        env:
-          KAON_ARCH: ${{ matrix.arch }}
         run: |
           set -euo pipefail
-          (cd dist && shasum -a 256 -c "SHA256SUMS-$KAON_ARCH")
-          zip_path="$(find dist -maxdepth 1 -type f -name "*-${KAON_ARCH}.zip" -print -quit)"
+          (cd dist && shasum -a 256 -c SHA256SUMS)
+          zip_path="$(find dist -maxdepth 1 -type f -name 'Kaon-Setup-*.zip' -print -quit)"
           [[ -n "$zip_path" ]]
           listing="$(mktemp)"
           unzip -Z1 "$zip_path" > "$listing"
@@ -178,7 +165,7 @@ jobs:
           extract="$(mktemp -d)"
           /usr/bin/ditto -x -k "$zip_path" "$extract"
           helper="$extract/Kaon Setup.app/Contents/Resources/Kaon/bin/kaon-setup"
-          /usr/bin/lipo -verify_arch "$KAON_ARCH" "$helper"
+          /usr/bin/lipo -verify_arch arm64 "$helper"
           archive_listing="$extract/archive.txt"
           pyi-archive_viewer -r "$helper" > "$archive_listing"
           grep -q 'kaon_repair' "$archive_listing"
@@ -192,7 +179,7 @@ jobs:
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: kaon-macos-${{ matrix.arch }}-${{ needs.prepare.outputs.version }}
+          name: kaon-macos-apple-silicon-${{ needs.prepare.outputs.version }}
           path: dist/
           if-no-files-found: error
 
@@ -215,34 +202,28 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Download architecture artifacts
+      - name: Download Apple Silicon artifacts
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          pattern: kaon-macos-*-${{ needs.prepare.outputs.version }}
+          name: kaon-macos-apple-silicon-${{ needs.prepare.outputs.version }}
           path: dist
-          merge-multiple: true
 
-      - name: Consolidate and verify checksums
+      - name: Verify checksums and signing status
         shell: bash
         run: |
           set -euo pipefail
-          test -f dist/SHA256SUMS-arm64
-          test -f dist/SHA256SUMS-x86_64
-          test -f dist/SIGNING-STATUS-arm64.txt
-          test -f dist/SIGNING-STATUS-x86_64.txt
-          cat dist/SHA256SUMS-arm64 dist/SHA256SUMS-x86_64 > dist/SHA256SUMS
-          cat dist/SIGNING-STATUS-arm64.txt dist/SIGNING-STATUS-x86_64.txt > dist/SIGNING-STATUS.txt
-          test "$(grep -c 'Developer ID signed and Apple-notarized' dist/SIGNING-STATUS.txt)" -eq 2
+          test -f dist/SHA256SUMS
+          test -f dist/SIGNING-STATUS.txt
+          test "$(grep -c 'Developer ID signed and Apple-notarized' dist/SIGNING-STATUS.txt)" -eq 1
           (cd dist && sha256sum -c SHA256SUMS)
-          rm dist/SHA256SUMS-arm64 dist/SHA256SUMS-x86_64
           {
             echo '## macOS installer signing status'
             echo
             sed 's/^/- /' dist/SIGNING-STATUS.txt
             echo
-            echo 'Choose the asset ending in `arm64` for Apple Silicon or `x86_64` for Intel. Verify it with the published `SHA256SUMS` file.'
+            echo 'Kaon supports Apple Silicon Macs. Download the `.dmg` and verify it with the published `SHA256SUMS` file if desired.'
             echo
-            echo 'Both public artifacts are Developer ID signed and Apple-notarized; the status is stated above for each architecture.'
+            echo 'The public app and disk image are Developer ID signed and Apple-notarized.'
           } > dist/RELEASE_NOTES.md
 
       - name: Publish GitHub release

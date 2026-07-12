@@ -1,10 +1,8 @@
 # macOS packaging and releases
 
-Kaon's downloadable macOS product is a native `Kaon Setup.app`. The release
-workflow publishes a ZIP and compressed DMG for each supported architecture:
-Apple Silicon (`arm64`) and Intel (`x86_64`). Artifact names include the
-architecture so users can choose the correct download. The app targets macOS
-13 or later.
+Kaon's downloadable macOS product is a native Apple Silicon `Kaon Setup.app`.
+The release workflow publishes one ZIP and one compressed DMG. The app targets
+macOS 13 or later on M1-or-newer Macs.
 
 The app contains a frozen `kaon-setup` helper with its own Python runtime.
 People installing Kaon do not need Python, Homebrew, Xcode, or command-line
@@ -25,14 +23,13 @@ installer. Create an isolated packaging environment and build natively:
 python3.13 -m venv .venv-package
 .venv-package/bin/python -m pip install 'pyinstaller==6.21.0'
 KAON_PYTHON=.venv-package/bin/python \
-KAON_ARCH="$(uname -m)" \
 macos/scripts/build-release.sh --version 0.1.0 --output dist
 ```
 
-Run that command on Apple Silicon to produce `*-arm64.zip` and `*-arm64.dmg`,
-or on an Intel Mac to produce the corresponding `*-x86_64` artifacts. The
-script deliberately rejects cross-architecture builds. GitHub Actions uses one
-native runner for each architecture and publishes both variants.
+Run that command on Apple Silicon to produce `Kaon-Setup-0.1.0.zip` and
+`Kaon-Setup-0.1.0.dmg`. The script deliberately rejects Intel hosts and
+cross-architecture builds. GitHub Actions builds on a native Apple Silicon
+runner.
 
 Without a signing identity the script applies an ad-hoc signature. This is
 useful for development and produces fully inspectable ZIP and DMG artifacts,
@@ -50,8 +47,8 @@ The script accepts these command-line options:
 --sign-identity NAME
 ```
 
-`KAON_ARCH` defaults to the host architecture. `KAON_PYTHON` selects the Python
-interpreter that runs the pinned PyInstaller version.
+`KAON_PYTHON` selects the Python interpreter that runs the pinned PyInstaller
+version.
 
 ## Deliberately small release payload
 
@@ -103,8 +100,8 @@ Useful verification commands are:
 codesign --verify --deep --strict --verbose=2 "Kaon Setup.app"
 spctl --assess --type execute --verbose=2 "Kaon Setup.app"
 xcrun stapler validate "Kaon Setup.app"
-xcrun stapler validate Kaon-Setup-0.1.0-arm64.dmg
-shasum -a 256 -c SHA256SUMS-arm64
+xcrun stapler validate Kaon-Setup-0.1.0.dmg
+shasum -a 256 -c SHA256SUMS
 ```
 
 ## GitHub Actions secrets
@@ -126,20 +123,19 @@ receive signing or notarization credentials.
 
 ## CI and release flow
 
-`.github/workflows/ci.yml` tests on both GitHub-hosted ARM64 and Intel macOS
-runners. It validates scripts and plists, runs the Python and Swift test suites,
-builds both native ad-hoc releases, audits each ZIP, verifies checksums, and
-executes the frozen helper in an environment that does not expose Python.
+`.github/workflows/ci.yml` tests on a GitHub-hosted Apple Silicon runner. It
+validates scripts and plists, runs the Python and Swift test suites, builds an
+ad-hoc release, audits the ZIP, verifies checksums, and executes the frozen
+helper in an environment that does not expose Python.
 
-`.github/workflows/release.yml` runs on `v*` tags or manually. Its native runner
-matrix freezes, signs, and uploads both architectures. Tag builds require
-Developer ID signing and notarization, verify both status records, then publish
-both ZIPs, both DMGs, and one consolidated `SHA256SUMS` file. A manual run may
-create architecture-labeled ad-hoc workflow artifacts without publishing a
-GitHub release, which is useful for release-candidate inspection.
+`.github/workflows/release.yml` runs on `v*` tags or manually. Its Apple Silicon
+runner freezes, signs, and uploads the app. Tag builds require Developer ID
+signing and notarization, verify the signing record, then publish the ZIP, DMG,
+and `SHA256SUMS` file. A manual run may create an ad-hoc workflow artifact
+without publishing a GitHub release, which is useful for release-candidate
+inspection.
 
-Before tagging a public version, complete a clean-machine smoke test on both an
-Apple Silicon Mac and an Intel Mac using current regular CrossOver and, where
-available, CrossOver Preview. Exercise install, repeated repair, background
-Steam startup, both optional hiding controls, CrossOver update fallback, and
-uninstall/restore.
+Before tagging a public version, complete a clean-machine smoke test on an
+Apple Silicon Mac using current regular CrossOver and, where available,
+CrossOver Preview. Exercise install, repeated repair, background Steam startup,
+both optional hiding controls, CrossOver update fallback, and uninstall/restore.

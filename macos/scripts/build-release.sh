@@ -16,7 +16,7 @@ VERSION="${KAON_VERSION:-}"
 BUNDLE_ID="${KAON_BUNDLE_ID:-io.github.enjihn.kaon.setup}"
 SIGN_IDENTITY="${KAON_SIGN_IDENTITY:--}"
 PYTHON="${KAON_PYTHON:-python3}"
-TARGET_ARCH="${KAON_ARCH:-$(uname -m)}"
+readonly TARGET_ARCH="arm64"
 SWIFT_BUILD="${KAON_SWIFT_BUILD:-}"
 readonly PYINSTALLER_VERSION="6.21.0"
 
@@ -32,7 +32,6 @@ Options:
   -h, --help               Show this help
 
 Environment:
-  KAON_ARCH                  Native target architecture (default: uname -m)
   KAON_PYTHON                Python used to run PyInstaller (default: python3)
   KAON_SWIFT_BUILD           Direct swift-build executable (advanced override)
   KAON_NOTARY_PROFILE        notarytool keychain profile
@@ -84,12 +83,8 @@ done
 [[ "$(uname -s)" == "Darwin" ]] || die "release builds require macOS"
 [[ "$BUNDLE_ID" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*$ ]] \
     || die "invalid bundle identifier: $BUNDLE_ID"
-case "$TARGET_ARCH" in
-    arm64|x86_64) ;;
-    *) die "unsupported architecture: $TARGET_ARCH" ;;
-esac
-[[ "$TARGET_ARCH" == "$(uname -m)" ]] \
-    || die "release builds must run natively on $TARGET_ARCH (host is $(uname -m))"
+[[ "$(uname -m)" == "$TARGET_ARCH" ]] \
+    || die "Kaon releases are Apple Silicon only; build on an arm64 Mac (host is $(uname -m))"
 command -v "$PYTHON" >/dev/null 2>&1 || die "Python was not found: $PYTHON"
 PYTHON_ARCH="$("$PYTHON" -c 'import platform; print(platform.machine())')"
 [[ "$PYTHON_ARCH" == "$TARGET_ARCH" ]] \
@@ -430,10 +425,10 @@ if [[ -n "$NOTARY_MODE" ]]; then
     xcrun stapler validate "$APP_BUNDLE"
 fi
 
-readonly ZIP_NAME="Kaon-Setup-$ARTIFACT_VERSION-$TARGET_ARCH.zip"
-readonly DMG_NAME="Kaon-Setup-$ARTIFACT_VERSION-$TARGET_ARCH.dmg"
-readonly CHECKSUM_NAME="SHA256SUMS-$TARGET_ARCH"
-readonly SIGNING_STATUS_NAME="SIGNING-STATUS-$TARGET_ARCH.txt"
+readonly ZIP_NAME="Kaon-Setup-$ARTIFACT_VERSION.zip"
+readonly DMG_NAME="Kaon-Setup-$ARTIFACT_VERSION.dmg"
+readonly CHECKSUM_NAME="SHA256SUMS"
+readonly SIGNING_STATUS_NAME="SIGNING-STATUS.txt"
 readonly ZIP_PATH="$OUTPUT_DIR/$ZIP_NAME"
 readonly DMG_PATH="$OUTPUT_DIR/$DMG_NAME"
 readonly CHECKSUM_PATH="$OUTPUT_DIR/$CHECKSUM_NAME"
@@ -487,6 +482,6 @@ elif [[ -n "$NOTARY_MODE" ]]; then
 else
     SIGNING_SUMMARY="Developer ID signed; not notarized"
 fi
-printf '%s: %s\n' "$TARGET_ARCH" "$SIGNING_SUMMARY" > "$SIGNING_STATUS_PATH"
+printf 'Apple Silicon (arm64): %s\n' "$SIGNING_SUMMARY" > "$SIGNING_STATUS_PATH"
 echo "Signature: $SIGNING_SUMMARY"
 echo "  $SIGNING_STATUS_PATH"

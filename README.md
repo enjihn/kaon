@@ -19,7 +19,7 @@ startup, rollback, and uninstall support.
 
 You need:
 
-- macOS 13 or newer on Apple Silicon or Intel;
+- macOS 13 or newer on an Apple Silicon Mac (M1 or newer);
 - the native [Steam for macOS](https://store.steampowered.com/about/) client,
   launched at least once;
 - CrossOver or CrossOver Preview already installed; and
@@ -50,14 +50,12 @@ offers **Open Selected CrossOver**, **Open or Get Native Steam**, and
 Then:
 
 1. Open [Releases](https://github.com/enjihn/kaon/releases), expand **Assets**,
-   and download the signed `.dmg`: `Kaon-Setup-<version>-arm64.dmg` for Apple
-   Silicon (M1/M2/M3/M4/M5), or `Kaon-Setup-<version>-x86_64.dmg` for Intel.
-   Do not use a source-code ZIP or an Actions artifact. Stop if the release
-   notes do not say both builds are **Developer ID signed and Apple-notarized**.
-   Apple menu → **About This Mac** tells you which processor you have.
+   and download the signed `Kaon-Setup-<version>.dmg`. Do not use a source-code
+   ZIP or an Actions artifact. Stop if the release notes do not say the build
+   is **Developer ID signed and Apple-notarized**.
 2. Open the DMG, drag **Kaon Setup.app** to **Applications**, then open it.
    Public tagged releases are Developer-ID signed and Apple-notarized; the
-   release notes state the verified status for both Mac architectures.
+   release notes state the verified status.
 3. Choose **CrossOver**, **CrossOver Preview**, or a custom CrossOver app.
 4. Select the bottle containing Windows Steam.
 5. Review the optional background and interface-hiding choices, then click
@@ -75,8 +73,8 @@ Then:
 
 Kaon is currently beta software. CI and manually triggered development
 artifacts may be ad-hoc signed and require Control-click → **Open**, but the
-release workflow refuses to publish a tagged public release unless both
-architecture builds are Developer-ID signed and Apple-notarized.
+release workflow refuses to publish a tagged public release unless the Apple
+Silicon build is Developer-ID signed and Apple-notarized.
 
 ## What Kaon changes
 
@@ -371,7 +369,7 @@ zsh -n macos/bin/kaon-setup macos/resources/*.sh
 ```
 
 Build a release with `macos/scripts/build-release.sh`. See
-[docs/PACKAGING.md](docs/PACKAGING.md) for signing, notarization, architecture,
+[docs/PACKAGING.md](docs/PACKAGING.md) for signing, notarization,
 artifact policy, and release secrets.
 
 ## Licensing and redistribution
