@@ -314,7 +314,7 @@ def native_steam_running() -> bool:
 def require_native_steam_closed() -> None:
     if native_steam_running():
         raise SetupError(
-            "Quit native macOS Steam completely before installing, repairing, or uninstalling Kaon.",
+            "Quit Mac Steam completely before installing, repairing, or uninstalling Kaon.",
             75,
         )
 
@@ -429,9 +429,9 @@ def preflight(config: Mapping[str, Any], require_appinfo: bool = True) -> dict[s
             66,
         )
     if not STEAM_ROOT.is_dir():
-        raise SetupError("Native macOS Steam has not been run for this user yet.", 66)
+        raise SetupError("Mac Steam has not been run for this user yet.", 66)
     if require_appinfo and not paths["appinfo"].is_file():
-        raise SetupError("Native Steam's appinfo cache is missing. Launch Steam once, quit it, and retry.", 66)
+        raise SetupError("Mac Steam's appinfo cache is missing. Launch Mac Steam once, quit it, and retry.", 66)
     return paths
 
 
@@ -1251,7 +1251,7 @@ class MutationSnapshot:
                 conflicts.append(f"newer external change at {path}")
                 continue
             if _is_native_steam_path(path) and native_steam_running():
-                conflicts.append(f"native Steam is using {path}")
+                conflicts.append(f"Mac Steam is using {path}")
                 continue
             kind = record["kind"]
             if kind == "missing":
@@ -1458,7 +1458,7 @@ def reconcile(config: Mapping[str, Any], state: MutableMapping[str, Any], includ
     runtime = install_runtime(state)
     changes: list[str] = []
     if native_steam_mutation(lambda: ensure_platform_override(paths["steam_dev"], state)):
-        changes.append("native Steam Windows platform override")
+        changes.append("Mac Steam Windows platform override")
     label = f"Shared {cross_over_display_name(config)} Library"
     for library_file in (STEAM_ROOT / "steamapps/libraryfolders.vdf", STEAM_ROOT / "config/libraryfolders.vdf"):
         if native_steam_mutation(
@@ -1763,7 +1763,7 @@ def uninstall_action(args: argparse.Namespace) -> dict[str, Any]:
         except SetupError as error:
             warnings.append(f"Launch entries could not be removed: {error}")
     else:
-        warnings.append("Native Steam's appinfo cache is missing; recorded Kaon launch entries were not removed.")
+        warnings.append("Mac Steam's appinfo cache is missing; recorded Kaon launch entries were not removed.")
     try:
         restore_tray_guard(config, paths, state)
     except SetupError as error:
@@ -1846,7 +1846,7 @@ def print_result(result: Mapping[str, Any], json_output: bool) -> None:
 
 
 def parser() -> argparse.ArgumentParser:
-    result = argparse.ArgumentParser(prog="kaon-setup", description="Set up native Steam to install and launch Windows games through CrossOver.")
+    result = argparse.ArgumentParser(prog="kaon-setup", description="Set up Mac Steam to install and launch Windows games through CrossOver.")
     result.add_argument(
         "action",
         nargs="?",

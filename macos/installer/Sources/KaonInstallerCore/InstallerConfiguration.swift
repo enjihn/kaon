@@ -76,6 +76,26 @@ public struct InstallerConfiguration: Equatable, Codable, Sendable {
         bottleName.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    public var crossOverDisplayName: String {
+        switch crossOverEdition {
+        case .stable:
+            return "CrossOver"
+        case .preview:
+            return "CrossOver Preview"
+        case .custom:
+            return crossOverApplicationURL?.deletingPathExtension().lastPathComponent
+                ?? "Custom CrossOver"
+        }
+    }
+
+    public var sharedLibraryDisplayName: String {
+        "Shared \(crossOverDisplayName) Library"
+    }
+
+    public var kaonLaunchOptionDisplayName: String {
+        "Play through \(crossOverDisplayName) (Kaon)"
+    }
+
     public func validationErrors(for action: SetupAction, fileManager: FileManager = .default) -> [String] {
         guard action == .install || action == .repair else { return [] }
         var errors: [String] = []

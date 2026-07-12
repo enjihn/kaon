@@ -136,10 +136,10 @@ final class InstallerViewModel: ObservableObject {
         var errors = configuration.validationErrors(for: action)
         if action == .install || action == .repair {
             if !nativeSteamReady {
-                errors.append("Open native Steam once, let your Library load, then quit Steam before continuing.")
+                errors.append("Open Mac Steam once, let your Library load, then quit Steam before continuing.")
             }
             if nativeSteamRunning {
-                errors.append("Native Steam is still open. In Steam, choose Steam → Quit Steam, then click Refresh Checks.")
+                errors.append("Mac Steam is still open. In Steam, choose Steam → Quit Steam, then click Refresh Checks.")
             }
             if !selectedBottleHasWindowsSteam {
                 errors.append("Windows Steam was not found in the selected bottle. Open CrossOver, install Steam there, then click Refresh Checks.")
@@ -213,7 +213,10 @@ final class InstallerViewModel: ObservableObject {
                     if let warning = Self.warningMessage(from: result.standardOutput) {
                         operationState = .warning(action, warning)
                     } else {
-                        operationState = .succeeded(action, Self.successMessage(for: action))
+                        operationState = .succeeded(
+                            action,
+                            Self.successMessage(for: action, configuration: configuration)
+                        )
                     }
                 } else {
                     let message = Self.failureMessage(from: result.combinedOutput)
@@ -236,10 +239,13 @@ final class InstallerViewModel: ObservableObject {
         operationLog = ""
     }
 
-    private static func successMessage(for action: SetupAction) -> String {
+    private static func successMessage(
+        for action: SetupAction,
+        configuration: InstallerConfiguration
+    ) -> String {
         switch action {
         case .install:
-            return "Kaon is installed. Reopen native Steam and choose the “Shared CrossOver … Library” whenever you install a Windows game."
+            return "Kaon is installed. Reopen Mac Steam and choose “\(configuration.sharedLibraryDisplayName)” whenever you install a Windows game."
         case .repair:
             return "Kaon’s files and Steam launch metadata were repaired."
         case .status:

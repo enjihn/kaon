@@ -398,7 +398,7 @@ def _assert_safe_inputs(vdf: Path, shared_steamapps: Path) -> None:
 
 def _assert_steam_closed() -> None:
     if native_steam_running():
-        raise RepairDeferred("native Steam is running; repair deferred")
+        raise RepairDeferred("Mac Steam is running; repair deferred")
     if metadata_editor_running():
         raise RepairDeferred("Steam Metadata Editor is running; repair deferred")
 

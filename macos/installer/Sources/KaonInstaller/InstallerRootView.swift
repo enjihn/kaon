@@ -39,13 +39,13 @@ struct InstallerRootView: View {
                 Label(page.title, systemImage: page.symbol)
                     .tag(page)
             }
-            .navigationTitle("Kaon")
+            .navigationTitle("Kaon Setup")
             .navigationSplitViewColumnWidth(min: 180, ideal: 210, max: 250)
             .safeAreaInset(edge: .bottom) {
                 VStack(alignment: .leading, spacing: 6) {
                     Label("User-level install", systemImage: "person.crop.circle.badge.checkmark")
                         .font(.caption.weight(.medium))
-                    Text("No administrator password required")
+                    Text("No privileged helper or sudo")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
@@ -116,7 +116,7 @@ private struct SetupView: View {
             VStack(alignment: .leading, spacing: 24) {
                 PageHeader(
                     title: "Configure Kaon",
-                    subtitle: "Connect native Steam to games installed in a CrossOver Steam bottle.",
+                    subtitle: "Connect Mac Steam to a Windows Steam bottle in CrossOver.",
                     symbol: "gamecontroller.fill"
                 )
 
@@ -192,14 +192,14 @@ private struct SetupView: View {
                         Divider()
                         PrerequisiteRow(
                             ready: viewModel.nativeSteamReady,
-                            readyText: "Native Steam has been opened and initialized",
-                            missingText: "Open native Steam once and let the Library load"
+                            readyText: "Mac Steam has been opened and initialized",
+                            missingText: "Open Mac Steam once and let the Library load"
                         )
                         Divider()
                         PrerequisiteRow(
                             ready: !viewModel.nativeSteamRunning,
-                            readyText: "Native Steam is fully quit and safe to configure",
-                            missingText: "Quit native Steam, then click Refresh Checks"
+                            readyText: "Mac Steam is fully quit and safe to configure",
+                            missingText: "Quit Mac Steam, then click Refresh Checks"
                         )
                         Divider()
                         PrerequisiteRow(
@@ -214,13 +214,13 @@ private struct SetupView: View {
                             missingText: "This bottle requires CrossOver Preview—select Preview above"
                         )
 
-                        Text("Quit native Steam completely before clicking Install. Kaon will stop safely and explain what to do if Steam is still open.")
+                        Text("Quit Mac Steam completely before clicking Install. Kaon will stop safely and explain what to do if Steam is still open.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
 
                         HStack {
-                            Button("Open or Get Native Steam") { viewModel.openNativeSteam() }
+                            Button("Open or Get Mac Steam") { viewModel.openNativeSteam() }
                             Button("Open Selected CrossOver") { viewModel.openSelectedCrossOver() }
                                 .disabled(!viewModel.selectedCrossOverApplicationIsValid)
                             Spacer()
@@ -235,31 +235,31 @@ private struct SetupView: View {
                 SettingsCard(title: "Reliability", symbol: "arrow.triangle.2.circlepath") {
                     OptionRow(
                         title: "Automatically repair Kaon changes",
-                        detail: "A lightweight user agent checks Steam’s metadata and restores Kaon launch options if a Steam update or edit removes them.",
+                        detail: "A lightweight user agent checks Kaon’s platform override, shared-library link, launchers, and managed game options after Mac Steam closes.",
                         isOn: $viewModel.configuration.automaticRepair
                     )
                     Divider()
                     OptionRow(
                         title: "Start Windows Steam at login",
-                        detail: "Starts the selected bottle’s Steam immediately after setup and after future sign-ins. You can stop or start it from Maintenance. Native Steam remains the interface you normally use.",
+                        detail: "Requests a quiet start after Install, after Repair, and at future sign-ins. Steam or CrossOver may still show a window when attention is required. Mac Steam remains the interface you normally use.",
                         isOn: $viewModel.configuration.startAtLogin
                     )
                 }
 
                 SettingsCard(title: "Optional interface hiding", symbol: "eye.slash") {
                     VStack(alignment: .leading, spacing: 14) {
-                        Text("These options only change the managed background session. They are off by default.")
+                    Text("These optional visibility changes apply to the selected CrossOver app and bottle. They are off by default.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
 
                         OptionRow(
-                            title: "Hide CrossOver Steam from the Dock in background",
-                            detail: "Suppresses the managed background session and removes an existing CrossOver Dock pin while enabled. If you open CrossOver yourself, it can appear in the Dock normally. Turning this off or uninstalling restores a pin Kaon removed.",
+                            title: "Remove CrossOver’s pinned Dock tile",
+                            detail: "When Kaon starts Windows Steam, it launches directly in the background. This also removes the selected CrossOver app’s pinned Dock tile, if present. Turning it off and running Repair, or uninstalling, restores a tile Kaon removed.",
                             isOn: $viewModel.configuration.hideDockWhenBackgrounded
                         )
                         Divider()
                         OptionRow(
-                            title: "Hide Windows tray icons from the macOS menu bar",
+                            title: "Hide Windows icons from the Mac menu bar",
                             detail: "Applies a guarded, bottle-local Explorer override. This hides every Windows tray icon in the selected bottle, never modifies CrossOver.app, and safely falls back after an unsupported CrossOver update.",
                             isOn: $viewModel.configuration.hideWindowsTrayIcons
                         )
@@ -333,12 +333,12 @@ private struct ReviewInstallView: View {
                     )
                     Divider()
                     SummaryRow(
-                        label: "Hide Dock in background",
+                        label: "Remove pinned Dock tile",
                         value: viewModel.configuration.hideDockWhenBackgrounded ? "Enabled" : "Disabled"
                     )
                     Divider()
                     SummaryRow(
-                        label: "Hide Windows tray icons",
+                        label: "Hide Windows menu-bar icons",
                         value: viewModel.configuration.hideWindowsTrayIcons ? "Enabled for this bottle" : "Disabled"
                     )
                 }
@@ -360,10 +360,10 @@ private struct ReviewInstallView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("What Install does")
                         .font(.headline)
-                    Text("It links the selected CrossOver Steam library to native Steam, installs Kaon’s launch helpers, updates Steam launch metadata safely, and enables only the automations selected above. Existing game files are reused, not copied.")
+                    Text("It links the selected CrossOver Steam library to Mac Steam, installs Kaon’s launch helpers, updates Steam launch metadata safely, and enables only the automations selected above. Existing game files are reused, not copied.")
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
-                    Text("After setup, always choose “Shared CrossOver … Library” in Steam’s Install dialog. New games in that library are added to Kaon automatically.")
+                    Text("After setup, choose “\(viewModel.configuration.sharedLibraryDisplayName)” in Steam’s Install dialog. Eligible games are added the next time Kaon can safely repair Steam’s metadata.")
                         .font(.callout.weight(.semibold))
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -371,22 +371,22 @@ private struct ReviewInstallView: View {
                 if viewModel.installationCompleted {
                     SettingsCard(title: "You're ready to install a PC game", symbol: "play.circle.fill") {
                         VStack(alignment: .leading, spacing: 10) {
-                            Text("1. Open native Steam.")
-                            Text("2. Click Install on a Windows game and choose “Shared CrossOver … Library.”")
+                            Text("1. Open Mac Steam.")
+                            Text("2. Install a Windows game into “\(viewModel.configuration.sharedLibraryDisplayName).”")
+                            Text("3. Click Play. If “\(viewModel.configuration.kaonLaunchOptionDisplayName)” appears, choose it—nothing else is needed.")
                             if viewModel.configuration.automaticRepair {
-                                Text("3. After a newly downloaded game finishes, choose Steam → Quit Steam. Wait up to one minute, then reopen Steam.")
+                                Text("4. If the Kaon option is missing, quit Mac Steam, wait about a minute, and reopen it. If the option is still missing, quit Steam and run Repair Kaon once.")
                             } else {
-                                Text("3. After a newly downloaded game finishes, quit Steam, open Maintenance, click Repair Kaon, then reopen Steam.")
+                                Text("4. If the Kaon option is missing, quit Mac Steam, open Maintenance, click Repair Kaon, and then reopen Steam.")
                             }
-                            Text("4. Click Play and choose “Play through … (Kaon).”")
                             Text(viewModel.configuration.automaticRepair
-                                 ? "You only need the quit-and-reopen step after installing a new game or when Kaon says a repair is waiting."
-                                 : "Because automatic repair is off, run Repair Kaon after every newly installed game.")
+                                 ? "Automatic repair changes metadata only while Mac Steam is closed. You do not need to quit after a download when the Kaon option is already present."
+                                 : "With automatic repair off, use Repair Kaon only when an eligible game is missing its Kaon option.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                             HStack {
                                 Spacer()
-                                Button("Open Native Steam") { viewModel.openNativeSteam() }
+                                Button("Open Mac Steam") { viewModel.openNativeSteam() }
                                     .buttonStyle(.borderedProminent)
                             }
                         }
@@ -436,7 +436,7 @@ private struct MaintenanceView: View {
                 )
 
                 SettingsCard(title: "Status", symbol: "waveform.path.ecg") {
-                    Text("Check the installed engine, Steam library link, launch metadata, background agent, and optional visibility changes.")
+                    Text("Reports the saved setup and checks Steam library links, launch metadata, background agents, and optional visibility changes.")
                         .foregroundStyle(.secondary)
                     HStack {
                         Spacer()
@@ -450,7 +450,7 @@ private struct MaintenanceView: View {
                 }
 
                 SettingsCard(title: "Repair", symbol: "cross.case") {
-                    Text("Reinstalls missing helpers and restores Kaon launch options using the choices on the Setup page. Steam is never edited while native Steam is actively writing its metadata.")
+                    Text("Reinstalls missing helpers and restores Kaon launch options using the choices on the Setup page. Steam metadata is never edited while Mac Steam is open.")
                         .foregroundStyle(.secondary)
                     HStack {
                         Spacer()

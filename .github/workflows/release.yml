@@ -241,6 +241,6 @@ jobs:
           else
             gh release create "$GITHUB_REF_NAME" \
               dist/Kaon-Setup-* dist/SHA256SUMS dist/SIGNING-STATUS.txt \
-              --title "Kaon $RELEASE_VERSION" \
+              --title "Kaon Setup $RELEASE_VERSION" \
               --notes-file dist/RELEASE_NOTES.md
           fi

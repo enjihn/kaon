@@ -47,6 +47,19 @@ final class InstallerConfigurationTests: XCTestCase {
         )
     }
 
+    func testDisplayNamesMatchSelectedCrossOverApplication() {
+        let preview = InstallerConfiguration(crossOverEdition: .preview)
+        XCTAssertEqual(preview.sharedLibraryDisplayName, "Shared CrossOver Preview Library")
+        XCTAssertEqual(preview.kaonLaunchOptionDisplayName, "Play through CrossOver Preview (Kaon)")
+
+        let custom = InstallerConfiguration(
+            crossOverEdition: .custom,
+            crossOverApplicationURL: URL(fileURLWithPath: "/Applications/CrossOver Nightly.app")
+        )
+        XCTAssertEqual(custom.sharedLibraryDisplayName, "Shared CrossOver Nightly Library")
+        XCTAssertEqual(custom.kaonLaunchOptionDisplayName, "Play through CrossOver Nightly (Kaon)")
+    }
+
     func testBottleNamesRejectTraversalAndLineBreaks() {
         for invalidName in ["../Steam", "Steam\nOther"] {
             let configuration = InstallerConfiguration(bottleName: invalidName)
