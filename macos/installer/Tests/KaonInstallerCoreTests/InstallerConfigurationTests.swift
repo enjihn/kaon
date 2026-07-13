@@ -71,4 +71,23 @@ final class InstallerConfigurationTests: XCTestCase {
             )
         }
     }
+
+    func testBottleNamesRejectExactPathComponents() {
+        for invalidName in [".", "..", "  ..  "] {
+            let configuration = InstallerConfiguration(bottleName: invalidName)
+            XCTAssertTrue(
+                configuration.validationErrors(for: .install).contains {
+                    $0.contains("cannot be “.” or “..”")
+                },
+                "Expected bottle name to be rejected: \(String(reflecting: invalidName))"
+            )
+        }
+
+        let ordinaryDots = InstallerConfiguration(bottleName: "Steam...Preview")
+        XCTAssertFalse(
+            ordinaryDots.validationErrors(for: .install).contains {
+                $0.contains("cannot be “.” or “..”")
+            }
+        )
+    }
 }

@@ -16,6 +16,33 @@ sys.path.insert(0, str(ENGINE))
 import kaon_setup  # noqa: E402
 
 
+class BottleValidationTests(unittest.TestCase):
+    def test_rejects_unsafe_or_unsupported_names(self):
+        invalid_names = (
+            "",
+            ".",
+            "..",
+            "Steam/Preview",
+            "Steam\x00Preview",
+            "Steam\rPreview",
+            "Steam\nPreview",
+            "S" * (kaon_setup.MAX_BOTTLE_NAME_LENGTH + 1),
+        )
+        for name in invalid_names:
+            with self.subTest(name=repr(name)):
+                with self.assertRaises(kaon_setup.SetupError) as raised:
+                    kaon_setup.validate_bottle_name(name)
+                self.assertEqual(raised.exception.exit_code, 64)
+
+    def test_accepts_length_limit_and_ordinary_punctuation(self):
+        boundary = "S" * kaon_setup.MAX_BOTTLE_NAME_LENGTH
+
+        self.assertEqual(kaon_setup.validate_bottle_name(boundary), boundary)
+        self.assertEqual(
+            kaon_setup.validate_bottle_name("Steam...Preview"), "Steam...Preview"
+        )
+
+
 class TextVDFTests(unittest.TestCase):
     def test_round_trip_preserves_nested_keys_and_windows_paths(self):
         source = OrderedDict(

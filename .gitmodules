@@ -1,0 +1,51 @@
+[submodule "lsteamclient/wine"]
+	path = lsteamclient/wine
+	url = https://github.com/ValveSoftware/wine
+[submodule "lsteamclient/dxvk"]
+	path = lsteamclient/dxvk
+	url = https://github.com/doitsujin/dxvk.git
+[submodule "lsteamclient/openvr"]
+	path = lsteamclient/openvr
+	url = https://github.com/ValveSoftware/openvr
+[submodule "lsteamclient/fonts/liberation-fonts"]
+	path = lsteamclient/fonts/liberation-fonts
+	url = https://github.com/liberationfonts/liberation-fonts
+[submodule "lsteamclient/gstreamer"]
+	path = lsteamclient/gstreamer
+	url = https://github.com/GStreamer/gstreamer.git
+[submodule "lsteamclient/gst-orc"]
+	path = lsteamclient/gst-orc
+	url = https://github.com/GStreamer/orc.git
+[submodule "lsteamclient/vkd3d-proton"]
+	path = lsteamclient/vkd3d-proton
+	url = https://github.com/HansKristian-Work/vkd3d-proton
+[submodule "lsteamclient/OpenXR-SDK"]
+	path = lsteamclient/OpenXR-SDK
+	url = https://github.com/KhronosGroup/OpenXR-SDK
+[submodule "lsteamclient/dxvk-nvapi"]
+	path = lsteamclient/dxvk-nvapi
+	url = https://github.com/jp7677/dxvk-nvapi
+[submodule "lsteamclient/vkd3d"]
+	path = lsteamclient/vkd3d
+	url = https://github.com/ValveSoftware/vkd3d
+[submodule "lsteamclient/Vulkan-Headers"]
+	path = lsteamclient/Vulkan-Headers
+	url = https://github.com/KhronosGroup/Vulkan-Headers
+[submodule "lsteamclient/SPIRV-Headers"]
+	path = lsteamclient/SPIRV-Headers
+	url = https://github.com/KhronosGroup/SPIRV-Headers
+[submodule "lsteamclient/ffmpeg"]
+	path = lsteamclient/ffmpeg
+	url = https://github.com/FFmpeg/FFmpeg
+[submodule "lsteamclient/dav1d"]
+	path = lsteamclient/dav1d
+	url = https://github.com/videolan/dav1d.git
+[submodule "lsteamclient/gst-plugins-rs"]
+	path = lsteamclient/gst-plugins-rs
+	url = https://github.com/sdroege/gst-plugin-rs
+[submodule "lsteamclient/graphene"]
+	path = lsteamclient/graphene
+	url = https://github.com/ebassi/graphene
+[submodule "lsteamclient/glslang"]
+	path = lsteamclient/glslang
+	url = https://github.com/KhronosGroup/glslang

@@ -59,6 +59,7 @@ KAON_LAUNCHERS = frozenset(
 STATE_VERSION = 1
 STABILITY_DELAY = 2.0
 MAX_BACKUPS = 20
+MAX_BOTTLE_NAME_LENGTH = 128
 
 
 class KaonRepairError(RuntimeError):
@@ -479,10 +480,22 @@ def repair(
     vdf = Path(vdf).expanduser()
     shared_steamapps = Path(shared_steamapps).expanduser()
     backup_dir = Path(backup_dir).expanduser()
-    if not bottle or "\x00" in bottle:
-        raise InvalidRepairInput("bottle name must not be empty or contain NUL")
-    if not description or "\x00" in description:
-        raise InvalidRepairInput("description must not be empty or contain NUL")
+    if not isinstance(bottle, str) or not bottle:
+        raise InvalidRepairInput("bottle name must be a non-empty string")
+    if len(bottle) > MAX_BOTTLE_NAME_LENGTH:
+        raise InvalidRepairInput(
+            f"bottle name must be {MAX_BOTTLE_NAME_LENGTH} characters or fewer"
+        )
+    if bottle in (".", ".."):
+        raise InvalidRepairInput("bottle name must not be '.' or '..'")
+    if any(character in bottle for character in ("/", "\x00", "\r", "\n")):
+        raise InvalidRepairInput(
+            "bottle name must not contain slashes, NUL, or line breaks"
+        )
+    if not isinstance(description, str) or not description:
+        raise InvalidRepairInput("description must be a non-empty string")
+    if any(character in description for character in ("\x00", "\r", "\n")):
+        raise InvalidRepairInput("description must not contain NUL or line breaks")
 
     _assert_safe_inputs(vdf, shared_steamapps)
     appinfo_module = _load_appinfo_module(Path(appinfo_module_path))

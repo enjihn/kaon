@@ -13,7 +13,11 @@ if [[ ! -f "$config" ]]; then
     exit 78
 fi
 
-crossover_app="$(/usr/bin/plutil -extract crossover_app raw -o - "$config")"
+if ! crossover_app="$(/usr/bin/plutil -extract crossover_app raw -o - "$config" 2>/dev/null)" \
+    || [[ -z "${crossover_app//[[:space:]]/}" ]]; then
+    print -u2 -- "Kaon configuration is incomplete or damaged. Open Kaon Setup and choose Repair."
+    exit 78
+fi
 hide_tray="$(/usr/bin/plutil -extract hide_tray raw -o - "$config" 2>/dev/null || print false)"
 wine="$crossover_app/Contents/SharedSupport/CrossOver/bin/wine"
 bottle="$1"

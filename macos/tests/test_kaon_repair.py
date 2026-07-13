@@ -102,16 +102,58 @@ class RepairTestCase(unittest.TestCase):
             patcher.stop()
         self.temporary.cleanup()
 
-    def invoke(self, *, check: bool = False) -> kaon_repair.RepairResult:
+    def invoke(
+        self,
+        *,
+        bottle: str = "Steam Preview",
+        description: str = "Play through CrossOver Preview (Kaon)",
+        check: bool = False,
+    ) -> kaon_repair.RepairResult:
         return kaon_repair.repair(
             vdf=self.vdf,
             shared_steamapps=self.shared_steamapps,
             appinfo_module_path=self.module.parent,
             backup_dir=self.backup_dir,
-            bottle="Steam Preview",
-            description="Play through CrossOver Preview (Kaon)",
+            bottle=bottle,
+            description=description,
             check=check,
         )
+
+    def test_repair_rejects_invalid_bottle_names(self) -> None:
+        invalid_names = (
+            "",
+            ".",
+            "..",
+            "Steam/Preview",
+            "Steam\x00Preview",
+            "Steam\rPreview",
+            "Steam\nPreview",
+            "S" * (kaon_repair.MAX_BOTTLE_NAME_LENGTH + 1),
+        )
+        before = self.vdf.read_bytes()
+        for bottle in invalid_names:
+            with self.subTest(bottle=repr(bottle)):
+                with self.assertRaises(kaon_repair.InvalidRepairInput):
+                    self.invoke(bottle=bottle)
+                self.assertEqual(self.vdf.read_bytes(), before)
+
+    def test_repair_rejects_invalid_descriptions(self) -> None:
+        before = self.vdf.read_bytes()
+        for description in ("", "Play\x00Kaon", "Play\rKaon", "Play\nKaon"):
+            with self.subTest(description=repr(description)):
+                with self.assertRaises(kaon_repair.InvalidRepairInput):
+                    self.invoke(description=description)
+                self.assertEqual(self.vdf.read_bytes(), before)
+
+    def test_repair_accepts_bottle_length_limit_and_description_punctuation(
+        self,
+    ) -> None:
+        result = self.invoke(
+            bottle="S" * kaon_repair.MAX_BOTTLE_NAME_LENGTH,
+            description="Play / CrossOver.preview (Kaon)",
+            check=True,
+        )
+        self.assertFalse(result.ok)
 
     def test_desired_entry_quotes_arguments_and_preserves_workdir(self) -> None:
         original = self.original["100"]["sections"]["appinfo"]["config"][

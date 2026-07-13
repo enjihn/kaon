@@ -61,6 +61,7 @@ LEGACY_LABELS = (
 PLATFORM_LINE = "@sSteamCmdForcePlatformType windows"
 STEAM_EXE_WINDOWS = "C:/Program Files (x86)/Steam/steam.exe"
 MANAGED_DESCRIPTION_TEMPLATE = "Play through {name} (Kaon)"
+MAX_BOTTLE_NAME_LENGTH = 128
 T = TypeVar("T")
 
 # Active transaction snapshots receive exact post-write fingerprints from the
@@ -342,8 +343,19 @@ def steam_paths(config: Mapping[str, Any]) -> dict[str, Path]:
 
 
 def validate_bottle_name(name: str) -> str:
-    if not name or name in (".", "..") or "/" in name or "\x00" in name:
-        raise SetupError("Bottle names may not be empty or contain path separators.", 64)
+    if not isinstance(name, str) or not name:
+        raise SetupError("Bottle name must be a non-empty string.", 64)
+    if len(name) > MAX_BOTTLE_NAME_LENGTH:
+        raise SetupError(
+            f"Bottle name must be {MAX_BOTTLE_NAME_LENGTH} characters or fewer.",
+            64,
+        )
+    if name in (".", ".."):
+        raise SetupError("Bottle name cannot be '.' or '..'.", 64)
+    if any(character in name for character in ("/", "\x00", "\r", "\n")):
+        raise SetupError(
+            "Bottle name cannot contain slashes, NUL, or line breaks.", 64
+        )
     return name
 
 

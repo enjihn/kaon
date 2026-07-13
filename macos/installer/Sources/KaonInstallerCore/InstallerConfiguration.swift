@@ -105,6 +105,8 @@ public struct InstallerConfiguration: Equatable, Codable, Sendable {
             errors.append("Enter the name of the CrossOver bottle that contains Steam.")
         } else if bottle.count > 128 {
             errors.append("The bottle name must be 128 characters or fewer.")
+        } else if bottle == "." || bottle == ".." {
+            errors.append("The bottle name cannot be “.” or “..”.")
         } else if bottle.contains("/") || bottle.contains("\n") || bottle.contains("\r") {
             errors.append("The bottle name cannot contain slashes or line breaks.")
         }
